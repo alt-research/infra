@@ -18,7 +18,7 @@ env:
 
 jobs:
   build-docker-image:
-    name: Build Docker Image and extract files
+    name: Build Docker Image
     runs-on: ["self-hosted", "linux", "x64", "ubuntu-latest"]
     steps:
       - name: Login to ECR
@@ -104,20 +104,3 @@ jobs:
             ${{ env.ECR_REPO }}
           tags: |
             type=raw,value=${{ env.REF_NAME }}
-
-      - name: Pull Image
-        run: |
-          docker pull ${{ steps.pull-meta.outputs.tags }}
-          echo IMG=${{ steps.pull-meta.outputs.tags }} | tee -a $GITHUB_ENV
-
-      - name: Extract binary
-        run: >
-          mkdir outputs;
-          docker run --rm -u=root -v $PWD/outputs:/out --entrypoint=/bin/bash $IMG -c
-          'set -x; cp /usr/local/bin/op-mach /out/op-mach; cp /usr/local/bin/arb-mach /out/arb-mach; ls /out'
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: binary
-          path: outputs
