@@ -28,6 +28,9 @@ jobs:
           username: ${{ secrets.ECR_ACCESS_KEY_ID }}
           password: ${{ secrets.ECR_ACCESS_KEY }}
 
+      - name: Checkout Sources
+        uses: actions/checkout@v4
+
       - uses: de-vri-es/setup-git-credentials@v2
         with:
           credentials: https://${{ secrets.GIT_USERNAME }}:${{ secrets.GIT_CREDENTIALS }}@github.com
