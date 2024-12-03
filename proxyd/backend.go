@@ -418,6 +418,11 @@ func (b *Backend) Forward(ctx context.Context, reqs []*RPCReq, isBatch bool) ([]
 				"err", err,
 			)
 		default:
+			// cancel error type, ignore re-try.
+			if errors.Is(err, context.Canceled) {
+				return nil, err
+			}
+
 			lastError = err
 			log.Warn(
 				"backend request failed, trying again",
@@ -583,6 +588,10 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 	start := time.Now()
 	httpRes, err := b.client.DoLimited(httpReq)
 	if err != nil {
+		// if it's canceld, we don't want to count it as an error
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
 		b.intermittentErrorsSlidingWindow.Incr()
 		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
 		return nil, wrapErr(err, "error in backend request")
@@ -1327,6 +1336,9 @@ type LimitedHTTPClient struct {
 
 func (c *LimitedHTTPClient) DoLimited(req *http.Request) (*http.Response, error) {
 	if err := c.sem.Acquire(req.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, err
+		}
 		tooManyRequestErrorsTotal.WithLabelValues(c.backendName).Inc()
 		return nil, wrapErr(err, "too many requests")
 	}
@@ -1406,6 +1418,14 @@ func (bg *BackendGroup) ForwardRequestToBackendGroup(
 		if len(rpcReqs) > 0 {
 
 			res, err = back.Forward(ctx, rpcReqs, isBatch)
+			if errors.Is(err, context.Canceled) {
+				log.Info("context canceled", "req_id", GetReqID(ctx), "auth", GetAuthCtx(ctx))
+				return &BackendGroupRPCResponse{
+					RPCRes:   nil,
+					ServedBy: "",
+					error:    err,
+				}
+			}
 
 			if errors.Is(err, ErrConsensusGetReceiptsCantBeBatched) ||
 				errors.Is(err, ErrConsensusGetReceiptsInvalidTarget) ||
