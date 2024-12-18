@@ -155,9 +155,6 @@ func NewServer(
 		maxBatchSize = DefaultMaxBatchRPCCallsLimit
 	}
 
-	if maxBatchSize > MaxBatchRPCCallsHardLimit {
-		maxBatchSize = MaxBatchRPCCallsHardLimit
-	}
 	if maxConcurrentWSRPCs == 0 {
 		maxConcurrentWSRPCs = defaultMaxConcurrentWSRPCs
 	}
