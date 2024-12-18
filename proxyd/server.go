@@ -133,9 +133,9 @@ func NewServer(
 		maxBatchSize = DefaultMaxBatchRPCCallsLimit
 	}
 
-	if maxBatchSize > MaxBatchRPCCallsHardLimit {
-		maxBatchSize = MaxBatchRPCCallsHardLimit
-	}
+	//if maxBatchSize > MaxBatchRPCCallsHardLimit {
+	//	maxBatchSize = MaxBatchRPCCallsHardLimit
+	//}
 
 	var mainLim FrontendRateLimiter
 	limExemptOrigins := make([]*regexp.Regexp, 0)
