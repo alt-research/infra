@@ -2,15 +2,19 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/holiman/uint256"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ethereum-optimism/infra/op-signer/service/provider"
+	"github.com/ethereum-optimism/optimism/op-service/eth"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
 	"github.com/ethereum-optimism/optimism/op-service/signer"
 )
@@ -88,7 +92,7 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 	if len(authConfig.ToAddresses) > 0 && !containsNormalized(authConfig.ToAddresses, args.To.Hex()) {
 		return nil, &UnauthorizedTransactionError{"to address not authorized"}
 	}
-	if len(authConfig.MaxValue) > 0 && args.Value.ToInt().Cmp(authConfig.MaxValueToInt()) > 0 {
+	if len(authConfig.MaxValue) > 0 && ((*uint256.Int)(args.Value)).ToBig().Cmp(authConfig.MaxValueToInt()) > 0 {
 		return nil, &UnauthorizedTransactionError{"value exceeds maximum"}
 	}
 
@@ -157,17 +161,29 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 		"tx.type", tx.Type(),
 		"tx.hash", tx.Hash().Hex(),
 		"tx.chainid", tx.ChainId(),
-		"tx.blobhashes", tx.BlobHashes(),
-		"tx.blobfeecap", tx.BlobGasFeeCap(),
+		"tx.blobhashes", fmt.Sprint(tx.BlobHashes()),
+		"tx.blobfeecap", fmt.Sprint(tx.BlobGasFeeCap()),
 		"signature", hexutil.Encode(signature),
 	)
 
 	return hexutil.Bytes(txraw), nil
 }
 
-func (s *OpsignerSerivce) SignBlockPayload(ctx context.Context, args signer.BlockPayloadArgs) (hexutil.Bytes, error) {
+func (s *OpsignerSerivce) SignBlockPayload(ctx context.Context, args signer.BlockPayloadArgs) (*eth.Bytes65, error) {
+	return s.signBlockPayload(ctx, args.Message, args.SenderAddress)
+}
+
+func (s *OpsignerSerivce) SignBlockPayloadV2(ctx context.Context, args signer.BlockPayloadArgsV2) (*eth.Bytes65, error) {
+	return s.signBlockPayload(ctx, args.Message, args.SenderAddress)
+}
+
+func (s *OpsignerSerivce) signBlockPayload(
+	ctx context.Context,
+	getMsg func() (*signer.BlockSigningMessage, error),
+	fromAddress *common.Address,
+) (*eth.Bytes65, error) {
 	clientInfo := ClientInfoFromContext(ctx)
-	authConfig, err := s.config.GetAuthConfigForClient(clientInfo.ClientName, args.SenderAddress)
+	authConfig, err := s.config.GetAuthConfigForClient(clientInfo.ClientName, fromAddress)
 	if err != nil {
 		return nil, rpc.HTTPError{StatusCode: 403, Status: "Forbidden", Body: []byte(err.Error())}
 	}
@@ -177,37 +193,39 @@ func (s *OpsignerSerivce) SignBlockPayload(ctx context.Context, args signer.Bloc
 		MetricSignTransactionTotal.With(labels).Inc()
 	}()
 
-	if err := args.Check(); err != nil {
+	msg, err := getMsg()
+	if err != nil {
 		s.logger.Warn("invalid signing arguments", "err", err)
 		labels["error"] = "invalid_blockPayload"
 		return nil, &InvalidBlockPayloadError{message: err.Error()}
 	}
 
-	if *args.SenderAddress != authConfig.FromAddress {
+	if fromAddress != nil && *fromAddress != authConfig.FromAddress {
 		s.logger.Warn("user is trying to sign with different sender account than actual signer-provider",
-			"provider", authConfig.FromAddress, "request", *args.SenderAddress)
+			"provider", authConfig.FromAddress, "request", fromAddress)
 		labels["error"] = "sign_error"
 		return nil, &UnauthorizedBlockPayloadError{"unexpected from address"}
 	}
 
-	if args.ChainID.Uint64() != authConfig.ChainID {
+	if msg.ChainID != eth.ChainIDFromUInt64(authConfig.ChainID) {
 		s.logger.Warn("user is trying to sign a block payload for a different chainID than the actual signer's chainID",
-			"provider", authConfig.ChainID, "request", *args.ChainID)
+			"provider", authConfig.ChainID, "request", msg.ChainID)
 		labels["error"] = "sign_error"
 		return nil, &UnauthorizedBlockPayloadError{"unexpected chainId"}
 	}
 
-	signingHash, err := args.ToSigningHash()
-	if err != nil {
-		labels["error"] = "invalid_blockPayload"
-		return nil, &InvalidBlockPayloadError{err.Error()}
-	}
+	signingHash := msg.ToSigningHash()
 
 	signature, err := s.provider.SignDigest(ctx, authConfig.KeyName, signingHash[:])
 	if err != nil {
 		labels["error"] = "sign_error"
 		return nil, &InvalidBlockPayloadError{err.Error()}
 	}
+	if len(signature) != 65 {
+		labels["error"] = "sign_error"
+		return nil, &InvalidBlockPayloadError{"signature has invalid length"}
+	}
+	result := eth.Bytes65(signature)
 
 	labels["status"] = "success"
 
@@ -217,5 +235,5 @@ func (s *OpsignerSerivce) SignBlockPayload(ctx context.Context, args signer.Bloc
 		"signature", hexutil.Encode(signature),
 	)
 
-	return signature, nil
+	return &result, nil
 }

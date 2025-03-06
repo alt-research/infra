@@ -61,10 +61,11 @@ def status(network: str):
     sequencers = network_obj.sequencers
     table = Table(
         "Sequencer ID",
-        "Conductor Active",
-        "Sequencer Healthy",
-        "Conductor Leader",
-        "Active Sequencer",
+        "Active",
+        "Healthy",
+        "Leader",
+        "Sequencing",
+        "Voting",
         "Unsafe Number",
         "Unsafe Hash",
     )
@@ -75,6 +76,7 @@ def status(network: str):
             print_boolean(sequencer.sequencer_healthy),
             print_boolean(sequencer.conductor_leader),
             print_boolean(sequencer.sequencer_active),
+            print_boolean(sequencer.voting),
             str(sequencer.unsafe_l2_number),
             str(sequencer.unsafe_l2_hash),
         )
@@ -95,10 +97,14 @@ def status(network: str):
                     print_error(
                         f": {sequencer.sequencer_id} does not have the correct voting status.")
                     display_correction = True
+                del membership[sequencer.sequencer_id]
             else:
                 print_warn(
                     f": {sequencer.sequencer_id} is not in the cluster")
                 display_correction = True
+        for sequencer_id in membership:
+            print_warn(
+                f": {sequencer_id} is in the cluster but not in the sequencer list. Remove using 'remove-server' command.")
         if display_correction:
             print_warn(
                 "Run 'update-cluster-membership' to correct membership issues")
@@ -110,6 +116,11 @@ def transfer_leader(network: str, sequencer_id: str, force: bool = False):
     network_obj = get_network(network)
 
     sequencer = network_obj.get_sequencer_by_id(sequencer_id)
+    leader = network_obj.find_conductor_leader()
+    if leader is None:
+        print_error(f"Could not find current leader in network {network}")
+        raise typer.Exit(code=1)
+
     if sequencer is None:
         print_error(
             f"Sequencer ID {sequencer_id} not found in network {network}")
@@ -118,15 +129,15 @@ def transfer_leader(network: str, sequencer_id: str, force: bool = False):
         print_error(f"Sequencer {sequencer_id} is not a voter")
         raise typer.Exit(code=1)
 
-    healthy = sequencer.sequencer_healthy
-    if not healthy and not force:
-        print_error(f"Target sequencer {sequencer_id} is not healthy. To still perform the leadership transfer, please use --force.")
-        raise typer.Exit(code=1)
-
-    leader = network_obj.find_conductor_leader()
-    if leader is None:
-        print_error(f"Could not find current leader in network {network}")
-        raise typer.Exit(code=1)
+    if not force:
+        if not sequencer.sequencer_healthy:
+            print_error(f"Target sequencer {sequencer_id} is not healthy. To still perform the leadership transfer, please use --force.")
+            raise typer.Exit(code=1)
+        if not sequencer.conductor_active:
+            print_error(f"Target sequencer {sequencer_id} conductor is paused. Please run 'resume' command first.")
+            raise typer.Exit(code=1)
+        if not leader.conductor_active:
+            print_error(f"Current leader {leader.sequencer_id} conductor is paused. Please run 'resume' command first.")
 
     resp = requests.post(
         leader.conductor_rpc_url,
@@ -223,7 +234,7 @@ def override_leader(network: str, sequencer_id: str, remove: bool = False, y: bo
         print_error(
             f"sequencer ID {sequencer_id} not found in network {network}")
         raise typer.Exit(code=1)
-    
+
     if remove:
         if y:
             print_warn("You are trying to remove the override. This would require you to explicitly restart op-node.")
@@ -269,13 +280,19 @@ def override_leader(network: str, sequencer_id: str, remove: bool = False, y: bo
 def remove_server(network: str, sequencer_id: str):
     """Remove a sequencer from the cluster."""
     network_obj = get_network(network)
-    sequencer = network_obj.get_sequencer_by_id(sequencer_id)
-    if sequencer is None:
-        print_error(
-            f"sequencer ID {sequencer_id} not found in network {network}")
-        raise typer.Exit(code=1)
 
     leader = network_obj.find_conductor_leader()
+    if leader is None:
+        print_error(f"Could not find current leader in network {network}")
+        raise typer.Exit(code=1)
+
+    sequencer = network_obj.get_sequencer_by_id(sequencer_id)
+    if sequencer is None:
+        membership = {x["id"]: x for x in leader.cluster_membership()}
+        if sequencer_id not in membership:
+            print_error(
+                f"sequencer ID {sequencer_id} not found in network {network}")
+            raise typer.Exit(code=1)
 
     resp = requests.post(
         leader.conductor_rpc_url,
