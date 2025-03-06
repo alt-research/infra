@@ -370,11 +370,11 @@ func (cp *ConsensusPoller) UpdateBackend(ctx context.Context, be *Backend) {
 		return
 	}
 
-	if finalizedBlockNumber == 0 {
-		log.Warn("error backend responded a 200 with blockheight 0 for finalized block", "name", be.Name)
-		be.intermittentErrorsSlidingWindow.Incr()
-		return
-	}
+	//if finalizedBlockNumber == 0 {
+	//	log.Warn("error backend responded a 200 with blockheight 0 for finalized block", "name", be.Name)
+	//	be.intermittentErrorsSlidingWindow.Incr()
+	//	return
+	//}
 
 	RecordConsensusBackendUpdateDelay(be, bs.lastUpdate)
 
