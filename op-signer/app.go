@@ -318,3 +318,19 @@ func ClientSign(action SignActionType) func(cliCtx *cli.Context) error {
 		return nil
 	}
 }
+
+func ListKeyInfo() func(cliCtx *cli.Context) error {
+	return func(cliCtx *cli.Context) error {
+		cfg := NewConfig(cliCtx)
+		logger := oplog.NewLogger(cliCtx.App.Writer, cfg.LogConfig)
+		app, err := InitFromConfig(cliCtx.Context, logger, cfg, "0.0.0")
+		if err != nil {
+			return err
+		}
+		if err := app.signer.ListKeyInfo(cliCtx.Context); err != nil {
+			return err
+		}
+
+		return nil
+	}
+}
