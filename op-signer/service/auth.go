@@ -35,8 +35,11 @@ func NewAuthMiddleware() oprpc.Middleware {
 			}
 
 			//clientInfo.ClientName = peerTlsInfo.LeafCertificate.DNSNames[0]
-			dns := extractHostname(r.Host)
-			fmt.Println("request:", "r-header", r.Header, "url", r.URL, "host", r.Host, "dns", dns, "tlsinfo0-dnsnames", peerTlsInfo.LeafCertificate.DNSNames)
+			dns, err := extractHostname(r.Host)
+			if err != nil || dns == "" {
+				http.Error(w, fmt.Sprintf("can not parse dns from host, host: %s", r.Host), 500)
+				return
+			}
 			for _, name := range peerTlsInfo.LeafCertificate.DNSNames {
 				if name == dns {
 					clientInfo.ClientName = dns
@@ -54,14 +57,16 @@ func NewAuthMiddleware() oprpc.Middleware {
 	}
 }
 
-func extractHostname(host string) string {
+func extractHostname(host string) (string, error) {
 	if strings.Contains(host, ":") {
 		h, _, err := net.SplitHostPort(host)
 		if err == nil {
-			return h
+			return h, nil
+		} else {
+			return "", err
 		}
 	}
-	return host
+	return host, nil
 }
 
 func ClientInfoFromContext(ctx context.Context) ClientInfo {
