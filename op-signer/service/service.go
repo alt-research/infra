@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -63,6 +65,25 @@ func (s *SignerService) RegisterAPIs(server *oprpc.Server) {
 		Namespace: "opsigner",
 		Service:   s.opsigner,
 	})
+}
+
+func (s *SignerService) ListPublicKeys(ctx context.Context) error {
+	for i := 0; i < len(s.eth.config.Auth); i++ {
+		auth := s.eth.config.Auth[i]
+
+		pubkey, err := s.eth.provider.GetPublicKey(ctx, auth.KeyName)
+		if err != nil {
+			return err
+		}
+
+		publicKey, err := crypto.UnmarshalPubkey(pubkey)
+		if err != nil {
+			return err
+		}
+		address := crypto.PubkeyToAddress(*publicKey)
+		s.eth.logger.Info("keyinfo:", "name", auth.ClientName, "auth key", auth.KeyName, "pubkey", hex.EncodeToString(pubkey), "addr", address)
+	}
+	return nil
 }
 
 func containsNormalized(s []string, e string) bool {

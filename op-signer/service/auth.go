@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
@@ -31,6 +32,7 @@ func NewAuthMiddleware() oprpc.Middleware {
 				return
 			}
 			clientInfo.ClientName = peerTlsInfo.LeafCertificate.DNSNames[0]
+			fmt.Println("request:", "r-header", r.Header, "tlsinfo0-dnsnames", peerTlsInfo.LeafCertificate.DNSNames)
 
 			ctx := context.WithValue(r.Context(), clientInfoContextKey{}, clientInfo)
 			next.ServeHTTP(w, r.WithContext(ctx))

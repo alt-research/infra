@@ -54,6 +54,17 @@ func main() {
 				},
 			},
 		},
+		{
+			Name:  "signer",
+			Usage: "Access provider to operate",
+			Subcommands: []*cli.Command{
+				{
+					Name:   "list-public-keys",
+					Usage:  "list public keys in config `auth`",
+					Action: signer.ListPubkeys(),
+				},
+			},
+		},
 	}
 
 	app.Action = cliapp.LifecycleCmd(signer.MainAppAction(Version))

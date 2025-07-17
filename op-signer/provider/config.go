@@ -73,6 +73,7 @@ func (s ProviderConfig) GetAuthConfigForClient(clientName string, fromAddress *c
 	}
 	for _, ac := range s.Auth {
 		if ac.ClientName == clientName {
+			fmt.Println("GetAuthConfigForClient", "clientName", clientName, "fromAddress", fromAddress)
 			// If fromAddress is specified, it must match the address in the authConfig
 			if fromAddress != nil && *fromAddress != ac.FromAddress {
 				continue
