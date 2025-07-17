@@ -31,8 +31,9 @@ func NewAuthMiddleware() oprpc.Middleware {
 				http.Error(w, "client certificate verified but did not contain DNS SAN extension", 401)
 				return
 			}
+
 			clientInfo.ClientName = peerTlsInfo.LeafCertificate.DNSNames[0]
-			fmt.Println("request:", "r-header", r.Header, "url", r.URL, "tlsinfo0-dnsnames", peerTlsInfo.LeafCertificate.DNSNames)
+			fmt.Println("request:", "r-header", r.Header, "url", r.URL, "host", r.Host, "tlsinfo0-dnsnames", peerTlsInfo.LeafCertificate.DNSNames)
 
 			ctx := context.WithValue(r.Context(), clientInfoContextKey{}, clientInfo)
 			next.ServeHTTP(w, r.WithContext(ctx))
