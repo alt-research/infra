@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
+	"slices"
+	"strings"
 
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
 	optls "github.com/ethereum-optimism/optimism/op-service/tls"
@@ -30,12 +34,35 @@ func NewAuthMiddleware() oprpc.Middleware {
 				http.Error(w, "client certificate verified but did not contain DNS SAN extension", 401)
 				return
 			}
-			clientInfo.ClientName = peerTlsInfo.LeafCertificate.DNSNames[0]
+			//clientInfo.ClientName = peerTlsInfo.LeafCertificate.DNSNames[0]
+			dnsName, err := extractHostname(r.Host)
+			if err != nil || dnsName == "" {
+				http.Error(w, fmt.Sprintf("can not parse dnsName from host, host: %s", r.Host), 500)
+				return
+			}
+			if !slices.Contains(peerTlsInfo.LeafCertificate.DNSNames, dnsName) {
+				s := fmt.Sprintf("client certificate provided but not in DNS SAN extension. current dnsName %s, DNSNames in certificate are: %s", dnsName, peerTlsInfo.LeafCertificate.DNSNames)
+				http.Error(w, s, 401)
+				return
+			}
+			clientInfo.ClientName = dnsName
 
 			ctx := context.WithValue(r.Context(), clientInfoContextKey{}, clientInfo)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func extractHostname(host string) (string, error) {
+	if strings.Contains(host, ":") {
+		h, _, err := net.SplitHostPort(host)
+		if err == nil {
+			return h, nil
+		} else {
+			return "", err
+		}
+	}
+	return host, nil
 }
 
 func ClientInfoFromContext(ctx context.Context) ClientInfo {
