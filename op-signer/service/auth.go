@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strings"
 
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
-	optls "github.com/ethereum-optimism/optimism/op-service/tls"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 type ClientInfo struct {
@@ -14,23 +16,32 @@ type ClientInfo struct {
 
 type clientInfoContextKey struct{}
 
-func NewAuthMiddleware() oprpc.Middleware {
+func tryExtractPath(url string) string {
+	subPath := strings.Split(url, "/")
+
+	res := make([]string, 0, len(subPath)+1)
+
+	for i := 0; i < len(subPath); i++ {
+		if subPath[i] != "" {
+			res = append(res, subPath[i])
+		}
+	}
+
+	return strings.Join(res, "/")
+}
+func NewAuthMiddleware(logger log.Logger) oprpc.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientInfo := ClientInfo{}
 
-			// PeerTLSInfo is attached to context by upstream op-service middleware
-			peerTlsInfo := optls.PeerTLSInfoFromContext(r.Context())
-			if peerTlsInfo.LeafCertificate == nil {
-				http.Error(w, "client certificate was not provided", 401)
-				return
+			logger.Debug("handler request", "r", r.Method, "host", r.Host, "ru", r.URL.String())
+
+			subPath := tryExtractPath(r.URL.Path)
+			if subPath != "" {
+				// NOTE: need use root path for rpc client
+				r.URL = &url.URL{Path: ""}
+				clientInfo.ClientName = subPath
 			}
-			// Note that the certificate is already verified by http server if we get here
-			if len(peerTlsInfo.LeafCertificate.DNSNames) < 1 {
-				http.Error(w, "client certificate verified but did not contain DNS SAN extension", 401)
-				return
-			}
-			clientInfo.ClientName = peerTlsInfo.LeafCertificate.DNSNames[0]
 
 			ctx := context.WithValue(r.Context(), clientInfoContextKey{}, clientInfo)
 			next.ServeHTTP(w, r.WithContext(ctx))

@@ -153,7 +153,7 @@ func (s *SignerApp) initRPC(cfg *Config) error {
 			Host:       rpcCfg.ListenAddr,
 			Port:       rpcCfg.ListenPort,
 			RpcOptions: []oprpc.Option{
-				oprpc.WithMiddleware(service.NewAuthMiddleware()),
+				oprpc.WithMiddleware(service.NewAuthMiddleware(s.log.With("module", "authMiddleware"))),
 				oprpc.WithHTTPRecorder(opmetrics.NewPromHTTPRecorder(s.registry, "signer")),
 				oprpc.WithLogger(s.log),
 			},
