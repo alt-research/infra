@@ -17,15 +17,16 @@ type SignatureProvider interface {
 type ProviderType string
 
 const (
-	KeyProviderAWS   ProviderType = "AWS"
-	KeyProviderGCP   ProviderType = "GCP"
-	KeyProviderLocal ProviderType = "LOCAL"
+	KeyProviderAWS      ProviderType = "AWS"
+	KeyProviderGCP      ProviderType = "GCP"
+	KeyProviderLocal    ProviderType = "LOCAL"
+	KeyProviderLocalKey ProviderType = "LOCALKEY"
 )
 
 // IsValid checks if the KeyProvider value is valid
 func (k ProviderType) IsValid() bool {
 	switch k {
-	case KeyProviderAWS, KeyProviderGCP, KeyProviderLocal:
+	case KeyProviderAWS, KeyProviderGCP, KeyProviderLocal, KeyProviderLocalKey:
 		return true
 	default:
 		return false
@@ -41,6 +42,8 @@ func NewSignatureProvider(logger log.Logger, providerType ProviderType, config P
 		return NewAWSKMSSignatureProvider(logger)
 	case KeyProviderLocal:
 		return NewLocalKMSSignatureProvider(logger, config)
+	case KeyProviderLocalKey:
+		return NewLocalPrivateKeySignatureProvider(logger, config)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
 	}

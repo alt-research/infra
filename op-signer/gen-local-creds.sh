@@ -1,6 +1,6 @@
-#!/usr/bin/env sh
+#!/bin/bash
 
-set -euo pipefail
+set -eu -o pipefail
 
 if [ -z "$TLS_DIR" ]; then
     SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
@@ -64,18 +64,18 @@ generate_client_tls() {
     local hostname="$1"
     echo
     echo "Generating client TLS credentials for $hostname..."
-    
-    
+
+
     # Create a directory for this client's credentials
     local clientDir="$TLS_DIR/$hostname"
     mkdir -p "$clientDir"
-    
+
     # Generate client key
     echo "Generating client key..."
     run_openssl genrsa -out "$clientDir/$CLIENT_TLS_KEY" "$MOD_LENGTH"
 
     local confFile="$clientDir/$CLIENT_OPENSSL_CNF"
-    
+
     # Create a config file for the CSR
     cat > "$confFile" << EOF
 [req]
@@ -83,7 +83,7 @@ distinguished_name=req
 [san]
 subjectAltName=DNS:$hostname
 EOF
-    
+
     echo "Generating client certificate signing request..."
     run_openssl req -new -key "$clientDir/$CLIENT_TLS_KEY" \
         -sha256 \
@@ -91,7 +91,7 @@ EOF
         -subj "/O=$CERT_ORG_NAME/CN=$hostname" \
         -extensions san \
         -config "$confFile"
-    
+
     echo "Generating client certificate..."
     run_openssl x509 -req -in "$clientDir/$CLIENT_TLS_CSR" \
         -sha256 \

@@ -3,3 +3,7 @@ tls/
 
 # Local envrc file
 .envrc.local
+
+config.local.yaml
+
+*.pem
