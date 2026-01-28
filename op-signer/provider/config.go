@@ -22,6 +22,7 @@ type AuthConfig struct {
 	FromAddress common.Address `yaml:"fromAddress"`
 	ToAddresses []string       `yaml:"toAddresses"`
 	MaxValue    string         `yaml:"maxValue"`
+	FieldName   string         `yaml:"fieldName"` // For VaultOnePassSignatureProvider
 }
 
 func (c AuthConfig) MaxValueToInt() *big.Int {
