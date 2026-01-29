@@ -1,10 +1,13 @@
 package provider
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/ethereum-optimism/infra/op-signer/provider/vault"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/hashicorp/vault/api"
@@ -12,26 +15,38 @@ import (
 
 // VaultOnePassSignatureProvider implements SignatureProvider using local private keys
 type VaultOnePassSignatureProvider struct {
-	*LocalKMSSignatureProvider
+	logger log.Logger
+	config ProviderConfig
+
+	mu     sync.RWMutex
+	keyMap map[string]*ecdsa.PrivateKey
 
 	vaultClient *api.Client
 }
 
 // NewVaultOnePassSignatureProvider creates a new VaultOnePassSignatureProvider and loads all configured keys
 func NewVaultOnePassSignatureProvider(logger log.Logger, config ProviderConfig) (SignatureProvider, error) {
+	// Load Vault authentication configuration
+	authCfg := vault.LoadVaultAuthConfig(logger)
+
+	// Initialize and authenticate Vault client
+	client, err := vault.NewVaultClient(logger, authCfg)
+	if err != nil {
+		logger.Error("Failed to initialize Vault client", "error", err)
+
+		return nil, fmt.Errorf("failed to initialize Vault client: %w", err)
+	}
+
 	provider := &VaultOnePassSignatureProvider{
-		LocalKMSSignatureProvider: &LocalKMSSignatureProvider{
-			logger: logger,
-			config: config,
-			keyMap: make(map[string]*ecdsa.PrivateKey),
-		},
+		logger:      logger,
+		config:      config,
+		keyMap:      make(map[string]*ecdsa.PrivateKey, 128),
+		vaultClient: client,
 	}
 
 	// Load all keys during construction
 	for _, auth := range config.Auth {
-		if err := provider.loadKey(auth.KeyName, auth.FieldName); err != nil {
-			return nil, fmt.Errorf("failed to load key from path '%s': %w", auth.KeyName, err)
-		}
+		provider.tryLoadKey(auth.KeyName)
 	}
 
 	return provider, nil
@@ -70,14 +85,113 @@ func (l *VaultOnePassSignatureProvider) parsePrivateKey(keyPath string, fieldNam
 
 // loadKey loads a private key from a file path and stores it in the key map
 func (l *VaultOnePassSignatureProvider) loadKey(keyPath string, fieldName string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.logger.Debug("loading key from path", "keyPath", keyPath)
 	key, err := l.parsePrivateKey(keyPath, fieldName)
 	if err != nil {
 		return fmt.Errorf("failed to load key from path '%s': %w", keyPath, err)
 	}
+
 	l.keyMap[keyPath] = key
 	l.logger.Info("loaded private key",
 		"keyPath", keyPath,
 		"address", crypto.PubkeyToAddress(key.PublicKey).Hex())
 	return nil
+}
+
+func KeyName(vaultPath string, fieldName string) string {
+	return fmt.Sprintf("%s/%s", vaultPath, fieldName)
+}
+
+func VaultPathAndFieldName(keyName string) (string, string, error) {
+	path := strings.Split(keyName, "/")
+
+	if len(path) < 2 {
+		return "", "", fmt.Errorf("invalid key name '%s', must be in format 'path/fieldName'", keyName)
+	}
+
+	fieldName := path[len(path)-1]
+	vaultPath := strings.Join(path[:len(path)-1], "/")
+
+	return vaultPath, fieldName, nil
+}
+
+func FieldName(keyName string) (string, error) {
+	path := strings.Split(keyName, "/")
+	if len(path) < 2 {
+		return "", fmt.Errorf("invalid key name '%s', must be in format 'vault/path/fieldName'", keyName)
+	}
+
+	return path[len(path)-1], nil
+
+}
+
+func (l *VaultOnePassSignatureProvider) tryLoadKey(keyName string) {
+	_, ok := l.getPrivateKey(keyName)
+	if ok {
+		return
+	}
+
+	vaultPath, fieldName, err := VaultPathAndFieldName(keyName)
+	if err != nil {
+		l.logger.Error("Failed to parse vault path and field name", "keyName", keyName, "error", err)
+		return
+	}
+
+	l.logger.Info("Loading key from vault", "keyName", keyName, "vaultPath", vaultPath, "fieldName", fieldName)
+
+	if err := l.loadKey(vaultPath, fieldName); err != nil {
+		l.logger.Error("Failed to load key from vault", "keyName", keyName, "error", err)
+	}
+}
+
+func (l *VaultOnePassSignatureProvider) getPrivateKey(keyName string) (*ecdsa.PrivateKey, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	res, ok := l.keyMap[keyName]
+	return res, ok
+}
+
+// SignDigest signs the digest using the local private key and returns a compact recoverable signature
+func (l *VaultOnePassSignatureProvider) SignDigest(
+	ctx context.Context,
+	keyName string,
+	digest []byte,
+) ([]byte, error) {
+	l.logger.Debug("signing digest", "keyName", keyName, "digestLength", len(digest))
+	l.tryLoadKey(keyName)
+
+	privateKey, ok := l.getPrivateKey(keyName)
+	if !ok {
+		return nil, fmt.Errorf("key '%s' not found in key map", keyName)
+	}
+
+	signature, err := crypto.Sign(digest, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign digest")
+	}
+
+	l.logger.Debug("successfully signed digest", "keyName", keyName, "signatureLength", len(signature))
+	return signature, nil
+}
+
+// GetPublicKey returns the public key in uncompressed format
+func (l *VaultOnePassSignatureProvider) GetPublicKey(
+	ctx context.Context,
+	keyName string,
+) ([]byte, error) {
+	l.logger.Debug("retrieving public key", "keyName", keyName)
+	l.tryLoadKey(keyName)
+
+	privateKey, ok := l.getPrivateKey(keyName)
+	if !ok {
+		return nil, fmt.Errorf("key '%s' not found in key map", keyName)
+	}
+
+	pubKey := crypto.FromECDSAPub(&privateKey.PublicKey)
+	l.logger.Debug("retrieved public key", "keyName", keyName, "pubKeyLength", len(pubKey))
+	return pubKey, nil
 }
