@@ -22,6 +22,7 @@ type VaultOnePassSignatureProvider struct {
 	keyMap map[string]*ecdsa.PrivateKey
 
 	vaultClient *api.Client
+	vaultCfg    vault.VaultAuthConfig
 }
 
 // NewVaultOnePassSignatureProvider creates a new VaultOnePassSignatureProvider and loads all configured keys
@@ -42,11 +43,14 @@ func NewVaultOnePassSignatureProvider(logger log.Logger, config ProviderConfig) 
 		config:      config,
 		keyMap:      make(map[string]*ecdsa.PrivateKey, 128),
 		vaultClient: client,
+		vaultCfg:    authCfg,
 	}
 
 	// Load all keys during construction
 	for _, auth := range config.Auth {
-		provider.tryLoadKey(auth.KeyName)
+		if err := provider.tryLoadKey(auth.KeyName); err != nil {
+			return nil, fmt.Errorf("failed to load key '%s': %w", auth.KeyName, err)
+		}
 	}
 
 	return provider, nil
@@ -128,23 +132,41 @@ func FieldName(keyName string) (string, error) {
 
 }
 
-func (l *VaultOnePassSignatureProvider) tryLoadKey(keyName string) {
+func (l *VaultOnePassSignatureProvider) isAllowedPath(path string) bool {
+	for _, prefix := range l.vaultCfg.AllowPathPrefixs {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (l *VaultOnePassSignatureProvider) tryLoadKey(keyName string) error {
 	_, ok := l.getPrivateKey(keyName)
 	if ok {
-		return
+		return nil
+	}
+
+	if !l.isAllowedPath(keyName) {
+		l.logger.Error("Vault path is not allowed", "keyName", keyName)
+		return fmt.Errorf("vault path is not allowed: %s", keyName)
 	}
 
 	vaultPath, fieldName, err := VaultPathAndFieldName(keyName)
 	if err != nil {
 		l.logger.Error("Failed to parse vault path and field name", "keyName", keyName, "error", err)
-		return
+		return fmt.Errorf("failed to parse vault path and field name: %w", err)
 	}
 
 	l.logger.Info("Loading key from vault", "keyName", keyName, "vaultPath", vaultPath, "fieldName", fieldName)
 
 	if err := l.loadKey(vaultPath, fieldName); err != nil {
 		l.logger.Error("Failed to load key from vault", "keyName", keyName, "error", err)
+		return fmt.Errorf("failed to load key from vault: %w", err)
 	}
+
+	return nil
 }
 
 func (l *VaultOnePassSignatureProvider) getPrivateKey(keyName string) (*ecdsa.PrivateKey, bool) {
@@ -162,7 +184,9 @@ func (l *VaultOnePassSignatureProvider) SignDigest(
 	digest []byte,
 ) ([]byte, error) {
 	l.logger.Debug("signing digest", "keyName", keyName, "digestLength", len(digest))
-	l.tryLoadKey(keyName)
+	if err := l.tryLoadKey(keyName); err != nil {
+		return nil, fmt.Errorf("failed to load key '%s': %w", keyName, err)
+	}
 
 	privateKey, ok := l.getPrivateKey(keyName)
 	if !ok {
@@ -184,7 +208,9 @@ func (l *VaultOnePassSignatureProvider) GetPublicKey(
 	keyName string,
 ) ([]byte, error) {
 	l.logger.Debug("retrieving public key", "keyName", keyName)
-	l.tryLoadKey(keyName)
+	if err := l.tryLoadKey(keyName); err != nil {
+		return nil, fmt.Errorf("failed to load key '%s': %w", keyName, err)
+	}
 
 	privateKey, ok := l.getPrivateKey(keyName)
 	if !ok {

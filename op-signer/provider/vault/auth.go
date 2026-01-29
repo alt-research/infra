@@ -3,6 +3,7 @@ package vault
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -35,6 +36,9 @@ type VaultAuthConfig struct {
 
 	// TokenRenewInterval is how often to renew the Vault token
 	TokenRenewInterval time.Duration
+
+	// AllowPathPrefixs is whether to allow path prefixes
+	AllowPathPrefixs []string
 }
 
 // NewVaultClient creates and authenticates a Vault client based on the configuration
@@ -139,13 +143,17 @@ func renewToken(logger log.Logger, client *api.Client, interval time.Duration) {
 
 // LoadVaultAuthConfig loads Vault authentication configuration from environment variables
 func LoadVaultAuthConfig(logger log.Logger) VaultAuthConfig {
+	allows := os.Getenv("OP_SIGNER_VAULT_ALLOW_PATH_PREFIXES")
+	allowsArrays := strings.Split(allows, ",")
+
 	cfg := VaultAuthConfig{
-		VaultAddr:               os.Getenv("VAULT_ADDR"),
-		AuthMethod:              os.Getenv("VAULT_AUTH_METHOD"),
-		Token:                   os.Getenv("VAULT_TOKEN"),
-		KubernetesRole:          os.Getenv("VAULT_KUBERNETES_ROLE"),
-		ServiceAccountTokenPath: os.Getenv("VAULT_SERVICE_ACCOUNT_TOKEN_PATH"),
+		VaultAddr:               os.Getenv("OP_SIGNER_VAULT_ADDR"),
+		AuthMethod:              os.Getenv("OP_SIGNER_VAULT_AUTH_METHOD"),
+		Token:                   os.Getenv("OP_SIGNER_VAULT_TOKEN"),
+		KubernetesRole:          os.Getenv("OP_SIGNER_VAULT_KUBERNETES_ROLE"),
+		ServiceAccountTokenPath: os.Getenv("OP_SIGNER_VAULT_SERVICE_ACCOUNT_TOKEN_PATH"),
 		TokenRenewInterval:      1 * time.Hour,
+		AllowPathPrefixs:        allowsArrays,
 	}
 
 	// Default to kubernetes auth if running in a pod (service account token exists)
