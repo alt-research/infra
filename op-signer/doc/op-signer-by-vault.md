@@ -72,6 +72,25 @@ Boot the signer:
 OP_SIGNER_VAULT_ROOT_PATH_PREFIX='op/vaults/testsign/items' OP_SIGNER_VAULT_TOKEN='root' OP_SIGNER_VAULT_ADDR='http://127.0.0.1:8200' ./bin/op-signer  --rpc.port 18545  --tls.enabled=false --config ./config.local.yaml --log.level debug
 ```
 
+for cofig:
+
+```
+auth:
+provider: VAULT1PASS
+```
+
+also we can use op-signer 's config to make more safy config:
+
+```
+auth:
+  - name: op/vaults/testsign/items/testnet/batcher-private
+    key: op/vaults/testsign/items/testnet/batcher-private
+    chainID: 11155111
+    fromAddress: 0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35
+provider: VAULT1PASS
+
+```
+
 Then we can set the batcher 's private key to 1pass with `batcher-private`, we can got:
 
 ```
