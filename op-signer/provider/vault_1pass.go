@@ -69,6 +69,8 @@ func (l *VaultOnePassSignatureProvider) parsePrivateKey(keyPath string, fieldNam
 		return nil, fmt.Errorf("no data returned from vault")
 	}
 
+	l.logger.Debug("secrets", "secret", secret.Data)
+
 	// Extract the private key field
 	privateKeyHex, ok := secret.Data[fieldName].(string)
 	if !ok {
@@ -92,13 +94,13 @@ func (l *VaultOnePassSignatureProvider) loadKey(keyPath string, fieldName string
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.logger.Debug("loading key from path", "keyPath", keyPath)
+	l.logger.Debug("loading key from path", "keyPath", keyPath, "fieldName", fieldName)
 	key, err := l.parsePrivateKey(keyPath, fieldName)
 	if err != nil {
 		return fmt.Errorf("failed to load key from path '%s': %w", keyPath, err)
 	}
 
-	l.keyMap[keyPath] = key
+	l.keyMap[KeyName(keyPath, fieldName)] = key
 	l.logger.Info("loaded private key",
 		"keyPath", keyPath,
 		"address", crypto.PubkeyToAddress(key.PublicKey).Hex())

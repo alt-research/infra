@@ -22,6 +22,7 @@ import (
 type SignerService struct {
 	eth      *EthService
 	opsigner *OpsignerService
+	alt      *AltService
 }
 
 type EthService struct {
@@ -51,7 +52,8 @@ func NewSignerServiceWithProvider(
 ) *SignerService {
 	ethService := EthService{logger, config, provider}
 	opsignerService := OpsignerService{logger, config, provider}
-	return &SignerService{&ethService, &opsignerService}
+	altService := AltService{logger, config, provider}
+	return &SignerService{&ethService, &opsignerService, &altService}
 }
 
 func (s *SignerService) RegisterAPIs(server *oprpc.Server) {
@@ -62,6 +64,10 @@ func (s *SignerService) RegisterAPIs(server *oprpc.Server) {
 	server.AddAPI(rpc.API{
 		Namespace: "opsigner",
 		Service:   s.opsigner,
+	})
+	server.AddAPI(rpc.API{
+		Namespace: "alt",
+		Service:   s.alt,
 	})
 }
 

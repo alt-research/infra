@@ -16,10 +16,16 @@ type ClientInfo struct {
 
 type clientInfoContextKey struct{}
 
-func tryExtractPath(url string) string {
+func tryExtractPath(url string, pathRootPrefix string) string {
 	subPath := strings.Split(url, "/")
 
-	res := make([]string, 0, len(subPath)+1)
+	res := make([]string, 0, len(subPath)+2)
+
+	if pathRootPrefix != "" {
+		pathRoots := strings.Split(pathRootPrefix, "/")
+		pathRoots = append(pathRoots, subPath...)
+		subPath = pathRoots
+	}
 
 	for i := 0; i < len(subPath); i++ {
 		if subPath[i] != "" {
@@ -29,14 +35,14 @@ func tryExtractPath(url string) string {
 
 	return strings.Join(res, "/")
 }
-func NewAuthMiddleware(logger log.Logger) oprpc.Middleware {
+func NewAuthMiddleware(logger log.Logger, pathRootPrefix string) oprpc.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientInfo := ClientInfo{}
 
 			logger.Debug("handler request", "r", r.Method, "host", r.Host, "ru", r.URL.String())
 
-			subPath := tryExtractPath(r.URL.Path)
+			subPath := tryExtractPath(r.URL.Path, pathRootPrefix)
 			if subPath != "" {
 				// NOTE: need use root path for rpc client
 				r.URL = &url.URL{Path: ""}

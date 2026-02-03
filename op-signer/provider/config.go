@@ -81,5 +81,10 @@ func (s ProviderConfig) GetAuthConfigForClient(clientName string, fromAddress *c
 			return &ac, nil
 		}
 	}
-	return nil, fmt.Errorf("client '%s' is not authorized to use any keys", clientName)
+
+	// allow empty client name to support more flexible usage
+	return &AuthConfig{
+		ClientName: clientName,
+		KeyName:    clientName,
+	}, nil
 }
