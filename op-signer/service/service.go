@@ -13,6 +13,7 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/ethereum-optimism/infra/op-signer/admin"
 	"github.com/ethereum-optimism/infra/op-signer/provider"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
@@ -20,15 +21,17 @@ import (
 )
 
 type SignerService struct {
-	eth      *EthService
-	opsigner *OpsignerService
-	alt      *AltService
+	eth          *EthService
+	opsigner     *OpsignerService
+	alt          *AltService
+	adminService *admin.AdminService
 }
 
 type EthService struct {
-	logger   log.Logger
-	config   provider.ProviderConfig
-	provider provider.SignatureProvider
+	logger       log.Logger
+	config       provider.ProviderConfig
+	provider     provider.SignatureProvider
+	adminService *admin.AdminService
 }
 
 type OpsignerService struct {
@@ -37,23 +40,24 @@ type OpsignerService struct {
 	provider provider.SignatureProvider
 }
 
-func NewSignerService(logger log.Logger, config provider.ProviderConfig) (*SignerService, error) {
+func NewSignerService(logger log.Logger, config provider.ProviderConfig, adminService *admin.AdminService) (*SignerService, error) {
 	provider, err := provider.NewSignatureProvider(logger, config.ProviderType, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signature provider: %w", err)
 	}
-	return NewSignerServiceWithProvider(logger, config, provider), nil
+	return NewSignerServiceWithProvider(logger, config, provider, adminService), nil
 }
 
 func NewSignerServiceWithProvider(
 	logger log.Logger,
 	config provider.ProviderConfig,
 	provider provider.SignatureProvider,
+	adminService *admin.AdminService,
 ) *SignerService {
-	ethService := EthService{logger, config, provider}
+	ethService := EthService{logger, config, provider, adminService}
 	opsignerService := OpsignerService{logger, config, provider}
 	altService := AltService{logger, config, provider}
-	return &SignerService{&ethService, &opsignerService, &altService}
+	return &SignerService{&ethService, &opsignerService, &altService, adminService}
 }
 
 func (s *SignerService) RegisterAPIs(server *oprpc.Server) {
@@ -97,6 +101,21 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 		s.logger.Warn("invalid signing arguments", "err", err)
 		labels["error"] = "invalid_transaction"
 		return nil, &InvalidTransactionError{message: err.Error()}
+	}
+
+	if s.adminService != nil {
+		clientCN, err := s.adminService.GetConfigForPath(authConfig.KeyName)
+		if err != nil {
+			s.logger.Warn("invalid client GetConfigForPath", "err", err)
+			labels["error"] = "invalid_client"
+			return nil, &InvalidClientError{message: err.Error()}
+		}
+
+		if clientCN.AllowedClientCN != "" && clientCN.AllowedClientCN != clientInfo.ClientCN {
+			s.logger.Warn("client CN not authorized", "clientCN", clientInfo.ClientCN, "allowedCN", clientCN.AllowedClientCN)
+			labels["error"] = "unauthorized_client"
+			return nil, &UnauthorizedClientError{message: "client CN not authorized"}
+		}
 	}
 
 	if len(authConfig.ToAddresses) > 0 && !containsNormalized(authConfig.ToAddresses, args.To.Hex()) {

@@ -6,6 +6,7 @@ import (
 )
 
 type Config struct {
+	Enabled   bool
 	TLSConfig optls.CLIConfig
 	RPCConfig oprpc.CLIConfig
 }

@@ -47,6 +47,12 @@ func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig Ke
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.logger.Info("adding new key config",
+		"address", address,
+		"path", keyConfig.Path,
+		"chainId", keyConfig.ParentChainID,
+		"allowedClientCN", keyConfig.AllowedClientCN)
+
 	if _, ok := s.keyConfig[keyConfig.AllowedClientCN]; ok {
 		return "", fmt.Errorf("key already exists")
 	}
@@ -67,4 +73,30 @@ func (s *AdminService) RemoveConfig(_ context.Context, address string) (string, 
 	delete(s.keyConfig, address)
 
 	return address, nil
+}
+
+func (s *AdminService) GetConfigForAddress(address string) (*KeyConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keyConfig, ok := s.keyConfig[address]
+	if !ok {
+		return nil, fmt.Errorf("key does not exist")
+	}
+
+	return keyConfig, nil
+}
+
+func (s *AdminService) GetConfigForPath(path string) (*KeyConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, keyConfig := range s.keyConfig {
+		if keyConfig.Path == path {
+			return keyConfig, nil
+		}
+
+	}
+
+	return nil, fmt.Errorf("key does not exist")
 }

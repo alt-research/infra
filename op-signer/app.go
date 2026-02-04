@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/signer"
 	"github.com/ethereum-optimism/optimism/op-service/tls/certman"
 
+	"github.com/ethereum-optimism/infra/op-signer/admin"
 	"github.com/ethereum-optimism/infra/op-signer/provider"
 	"github.com/ethereum-optimism/infra/op-signer/service"
 )
@@ -43,7 +44,8 @@ type SignerApp struct {
 
 	signer *service.SignerService
 
-	rpc *oprpc.Server
+	rpc      *oprpc.Server
+	adminApp *admin.AdminApp
 
 	stopped atomic.Bool
 }
@@ -65,6 +67,11 @@ func (s *SignerApp) init(cfg *Config) error {
 	}
 	if err := s.initMetrics(cfg); err != nil {
 		return fmt.Errorf("metrics error: %w", err)
+	}
+	if cfg.AdminConfig.Enabled {
+		if err := s.initAdmin(cfg); err != nil {
+			return fmt.Errorf("admin error: %w", err)
+		}
 	}
 	if err := s.initRPC(cfg); err != nil {
 		return fmt.Errorf("rpc error: %w", err)
@@ -167,7 +174,13 @@ func (s *SignerApp) initRPC(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to read provider config: %w", err)
 	}
-	s.signer, err = service.NewSignerService(s.log, providerCfg)
+
+	var adminService *admin.AdminService
+	if s.adminApp != nil {
+		adminService = s.adminApp.Service()
+	}
+
+	s.signer, err = service.NewSignerService(s.log, providerCfg, adminService)
 	if err != nil {
 		return fmt.Errorf("failed to create signer service: %w", err)
 	}
@@ -181,6 +194,17 @@ func (s *SignerApp) initRPC(cfg *Config) error {
 	return nil
 }
 
+func (s *SignerApp) initAdmin(cfg *Config) error {
+	s.adminApp = admin.NewAdminApp(s.log, s.registry)
+	s.adminApp.SetVersion(s.version)
+
+	if err := s.adminApp.Init(&cfg.AdminConfig); err != nil {
+		return fmt.Errorf("failed to initialize admin app: %w", err)
+	}
+
+	return nil
+}
+
 func (s *SignerApp) Start(ctx context.Context) error {
 	return nil
 }
@@ -190,6 +214,11 @@ func (s *SignerApp) Stop(ctx context.Context) error {
 	if s.rpc != nil {
 		if err := s.rpc.Stop(); err != nil {
 			result = errors.Join(result, fmt.Errorf("failed to stop RPC server: %w", err))
+		}
+	}
+	if s.adminApp != nil && s.adminApp.RPCServer() != nil {
+		if err := s.adminApp.RPCServer().Stop(); err != nil {
+			result = errors.Join(result, fmt.Errorf("failed to stop admin RPC server: %w", err))
 		}
 	}
 	if s.pprofServer != nil {

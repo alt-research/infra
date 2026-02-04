@@ -19,3 +19,15 @@ type UnauthorizedBlockPayloadError struct{ message string }
 
 func (e *UnauthorizedBlockPayloadError) Error() string  { return e.message }
 func (e *UnauthorizedBlockPayloadError) ErrorCode() int { return -32013 }
+
+type InvalidClientError struct{ message string }
+
+func (e *InvalidClientError) Error() string { return e.message }
+
+func (e *InvalidClientError) ErrorCode() int { return -32014 }
+
+type UnauthorizedClientError struct{ message string }
+
+func (e *UnauthorizedClientError) Error() string { return e.message }
+
+func (e *UnauthorizedClientError) ErrorCode() int { return -32015 }

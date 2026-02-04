@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 type ClientInfo struct {
 	ClientName string
+	ClientCN   string
 }
 
 type clientInfoContextKey struct{}
@@ -49,10 +51,43 @@ func NewAuthMiddleware(logger log.Logger, pathRootPrefix string) oprpc.Middlewar
 				clientInfo.ClientName = subPath
 			}
 
+			clientCN := getClientCN(logger, r)
+			if clientCN != "" {
+				logger.Debug("handler request", "clientCN", clientCN)
+				clientInfo.ClientCN = clientCN
+			}
+
 			ctx := context.WithValue(r.Context(), clientInfoContextKey{}, clientInfo)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// getClientCN extracts the Common Name from the client certificate in the request.
+// Returns empty string if no certificate is present or if called from localhost.
+func getClientCN(logger log.Logger, r *http.Request) string {
+	logger.Debug("extracting client CN", "remoteAddr", r.RemoteAddr, "tls", r.TLS)
+
+	// No TLS connection
+	if r.TLS == nil {
+		return ""
+	}
+
+	// Check if localhost (no client cert required)
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if host == "127.0.0.1" || host == "::1" {
+		return ""
+	}
+
+	// No client certificate
+	if len(r.TLS.PeerCertificates) == 0 {
+		return ""
+	}
+
+	return r.TLS.PeerCertificates[0].Subject.CommonName
 }
 
 func ClientInfoFromContext(ctx context.Context) ClientInfo {

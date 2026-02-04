@@ -151,7 +151,7 @@ func testSignTransaction(t *testing.T, tx *types.Transaction) {
 	for _, tt := range tests {
 		t.Run(tt.testName, func(t *testing.T) {
 			mockSignatureProvider := provider.NewMockSignatureProvider(ctrl)
-			service := NewSignerServiceWithProvider(log.Root(), config, mockSignatureProvider)
+			service := NewSignerServiceWithProvider(log.Root(), config, mockSignatureProvider, nil)
 
 			ctx := context.WithValue(context.TODO(), clientInfoContextKey{}, ClientInfo{ClientName: tt.clientName})
 			if tt.wantErrCode == 0 || tt.testName == "invalid from" {
@@ -263,7 +263,7 @@ func TestSignBlockPayload(t *testing.T) {
 
 		runCase := func(t *testing.T, fn func(ctx context.Context, service *SignerService) (resp *eth.Bytes65, err error)) {
 			mockSignatureProvider := provider.NewMockSignatureProvider(ctrl)
-			service := NewSignerServiceWithProvider(log.Root(), blockPayloadConfig, mockSignatureProvider)
+			service := NewSignerServiceWithProvider(log.Root(), blockPayloadConfig, mockSignatureProvider, nil)
 
 			ctx := context.WithValue(context.TODO(), clientInfoContextKey{}, ClientInfo{ClientName: tt.clientName})
 			if tt.wantErrCode == 0 || tt.testName == "invalid from" {

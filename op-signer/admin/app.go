@@ -33,7 +33,16 @@ func NewAdminApp(logger log.Logger, registry *prometheus.Registry) *AdminApp {
 	}
 }
 
-func (s *AdminApp) init(cfg *Config) error {
+// SetVersion sets the version of the admin app
+func (s *AdminApp) SetVersion(version string) {
+	s.version = version
+}
+
+func (s *AdminApp) Service() *AdminService {
+	return s.service
+}
+
+func (s *AdminApp) Init(cfg *Config) error {
 	if err := s.initRPC(cfg); err != nil {
 		return fmt.Errorf("failed to initialize RPC: %w", err)
 	}
@@ -102,4 +111,9 @@ func (s *AdminApp) initRPC(cfg *Config) error {
 	s.log.Info("Started op-signer RPC server", "addr", s.rpc.Endpoint())
 
 	return nil
+}
+
+// RPCServer returns the underlying RPC server to allow external management such as stopping it
+func (s *AdminApp) RPCServer() *oprpc.Server {
+	return s.rpc
 }
