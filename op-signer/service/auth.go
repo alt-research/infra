@@ -37,6 +37,11 @@ func tryExtractPath(url string, pathRootPrefix string) string {
 
 	return strings.Join(res, "/")
 }
+
+func MakeFullPath(pathRootPrefix string, url string) string {
+	return tryExtractPath(url, pathRootPrefix)
+}
+
 func NewAuthMiddleware(logger log.Logger, pathRootPrefix string) oprpc.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -178,6 +178,19 @@ func (s *SignerApp) initRPC(cfg *Config) error {
 	var adminService *admin.AdminService
 	if s.adminApp != nil {
 		adminService = s.adminApp.Service()
+		for _, authCfg := range providerCfg.Auth {
+			if authCfg.FromAddress != common.Address([common.AddressLength]byte{}) {
+				cfg := admin.KeyConfig{
+					AllowedClientCN: authCfg.AllowedClientCN,
+					ParentChainID:   authCfg.ChainID,
+					Path:            authCfg.ClientName,
+				}
+
+				if _, err := adminService.AddConfig(context.TODO(), authCfg.FromAddress.String(), cfg); err != nil {
+					return fmt.Errorf("failed to add config for address %s: %w", authCfg.FromAddress.String(), err)
+				}
+			}
+		}
 	}
 
 	s.signer, err = service.NewSignerService(s.log, providerCfg, adminService)

@@ -19,9 +19,10 @@ type AuthConfig struct {
 	// ChainID chain id of the op-signer to sign for
 	ChainID uint64 `yaml:"chainID"`
 	// FromAddress sender address that is sending the rpc request
-	FromAddress common.Address `yaml:"fromAddress"`
-	ToAddresses []string       `yaml:"toAddresses"`
-	MaxValue    string         `yaml:"maxValue"`
+	FromAddress     common.Address `yaml:"fromAddress"`
+	ToAddresses     []string       `yaml:"toAddresses"`
+	MaxValue        string         `yaml:"maxValue"`
+	AllowedClientCN string         `yaml:"allowed_client_cn"` // Optional Common Name restriction for client TLS certs
 }
 
 func (c AuthConfig) MaxValueToInt() *big.Int {
