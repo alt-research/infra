@@ -145,3 +145,68 @@ INFO [02-03|15:29:09.208] Channel closed                           id=c8a7ee..af
 INFO [02-03|15:29:09.209] Building Blob transaction candidate      size=119,603 last_size=119,603 num_blobs=1
 INFO [02-03|15:29:10.058] Added L2 block to local state            block=927425..b58643:3330 tx_count=1   time=1,770,103,750
 ```
+
+## Security
+
+### 1. add allow path for signer
+
+use `OP_SIGNER_VAULT_ALLOW_PATH_PREFIXES` to set the allow path for signer:
+
+```bash
+OP_SIGNER_VAULT_ALLOW_PATH_PREFIXES="op/vaults/testsign/items/testnet/batcher-private,op/vaults/testsign/items/testnet/t1"
+```
+
+then we can see the api not allow the path not in the allow paths:
+
+```bash
+curl  --cert ./tls/127.0.0.1/tls.crt --key ./tls/127.0.0.1/tls.key --cacert ./tls/ca.crt -X POST https://localhost:18545/testnet/t2  \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "alt_publickey",
+    "params": [],
+    "id": 1
+  }'
+{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"GetPublicKey Failed: failed to load key 'op/vaults/testsign/items/testnet/t2': vault path is not allowed: op/vaults/testsign/items/testnet/t2"}}
+```
+
+### 2. use allowed_client_cn config
+
+in config.yaml, we can use `allowed_client_cn` to set the allowed client cn:
+
+```yaml
+auth:
+  - name: op/vaults/testsign/items/testnet/batcher-private
+    key: op/vaults/testsign/items/testnet/batcher-private
+    chainID: 1
+    fromAddress: 0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35
+    allowed_client_cn: "localhost"
+provider: VAULT1PASS
+```
+
+when `fromAddress` is not empty, it will use `allowed_client_cn`.
+
+also we can use admin api to add allowed client cn:
+
+```bash
+curl  --cert ./tls/127.0.0.1/tls.crt --key ./tls/127.0.0.1/tls.key --cacert ./tls/ca.crt -X POST https://localhost:9545  \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "admin_getConfigs",
+    "params": [],
+    "id": 1
+  }'
+{"jsonrpc":"2.0","id":1,"result":{"0xD3F2c5AFb2D76f5579F326b0cD7DA5F5a4126c35":{"path":"op/vaults/testsign/items/testnet/batcher-private","parent_chain_id":1,"allowed_client_cn":"localhost"}}}
+```
+
+```bash
+curl -v  --cert ./tls/127.0.0.1/tls.crt --key ./tls/127.0.0.1/tls.key --cacert ./tls/ca.crt -X POST https://localhost:9545  \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "admin_addConfig",
+    "params": ["op/vaults/testsign/items/testnet/t2", {"path":"op/vaults/testsign/items/testnet/t2"}],
+    "id": 1
+  }'
+```
