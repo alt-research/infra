@@ -1,0 +1,14 @@
+{
+  "provider": "VAULT1PASS",
+  "auth": [
+    {
+      "name": "op/vaults/testsign/items/testnet/batcher-private",
+      "key": "op/vaults/testsign/items/testnet/batcher-private",
+      "chainID": 1,
+      "fromAddress": "0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35",
+      "toAddresses": [],
+      "maxValue": "0x0",
+      "allowed_client_cn": "localhost"
+    }
+  ]
+}

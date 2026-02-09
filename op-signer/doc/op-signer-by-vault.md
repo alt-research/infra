@@ -81,13 +81,21 @@ provider: VAULT1PASS
 
 also we can use op-signer 's config to make more safy config:
 
-```
-auth:
-  - name: op/vaults/testsign/items/testnet/batcher-private
-    key: op/vaults/testsign/items/testnet/batcher-private
-    chainID: 11155111
-    fromAddress: 0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35
-provider: VAULT1PASS
+```json
+{
+  "provider": "VAULT1PASS",
+  "auth": [
+    {
+      "name": "op/vaults/testsign/items/testnet/batcher-private",
+      "key": "op/vaults/testsign/items/testnet/batcher-private",
+      "chainID": 1,
+      "fromAddress": "0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35",
+      "toAddresses": [],
+      "maxValue": "0x0",
+      "allowed_client_cn": "localhost"
+    }
+  ]
+}
 
 ```
 
@@ -174,14 +182,22 @@ curl  --cert ./tls/127.0.0.1/tls.crt --key ./tls/127.0.0.1/tls.key --cacert ./tl
 
 in config.yaml, we can use `allowed_client_cn` to set the allowed client cn:
 
-```yaml
-auth:
-  - name: op/vaults/testsign/items/testnet/batcher-private
-    key: op/vaults/testsign/items/testnet/batcher-private
-    chainID: 1
-    fromAddress: 0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35
-    allowed_client_cn: "localhost"
-provider: VAULT1PASS
+```json
+{
+  "provider": "VAULT1PASS",
+  "auth": [
+    {
+      "name": "op/vaults/testsign/items/testnet/batcher-private",
+      "key": "op/vaults/testsign/items/testnet/batcher-private",
+      "chainID": 1,
+      "fromAddress": "0xd3f2c5afb2d76f5579f326b0cd7da5f5a4126c35",
+      "toAddresses": [],
+      "maxValue": "0x0",
+      "allowed_client_cn": "localhost"
+    }
+  ]
+}
+
 ```
 
 when `fromAddress` is not empty, it will use `allowed_client_cn`.

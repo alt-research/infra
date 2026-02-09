@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -9,21 +10,20 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"gopkg.in/yaml.v3"
 )
 
 type AuthConfig struct {
 	// ClientName DNS name of the client connecting to op-signer.
-	ClientName string `yaml:"name"`
+	ClientName string `yaml:"name" json:"name"`
 	// KeyName key locator for the KMS (resource name in cloud provider, or path to private key file for local provider)
-	KeyName string `yaml:"key"`
+	KeyName string `yaml:"key" json:"key"`
 	// ChainID chain id of the op-signer to sign for
-	ChainID uint64 `yaml:"chainID"`
+	ChainID uint64 `yaml:"chainID" json:"chainID"`
 	// FromAddress sender address that is sending the rpc request
-	FromAddress     common.Address `yaml:"fromAddress"`
-	ToAddresses     []string       `yaml:"toAddresses"`
-	MaxValue        string         `yaml:"maxValue"`
-	AllowedClientCN string         `yaml:"allowed_client_cn"` // Optional Common Name restriction for client TLS certs
+	FromAddress     common.Address `yaml:"fromAddress" json:"fromAddress"`
+	ToAddresses     []string       `yaml:"toAddresses" json:"toAddresses"`
+	MaxValue        string         `yaml:"maxValue" json:"maxValue"`
+	AllowedClientCN string         `yaml:"allowed_client_cn" json:"allowed_client_cn"` // Optional Common Name restriction for client TLS certs
 }
 
 func (c AuthConfig) MaxValueToInt() *big.Int {
@@ -31,10 +31,52 @@ func (c AuthConfig) MaxValueToInt() *big.Int {
 }
 
 type ProviderConfig struct {
-	providerType ProviderType `yaml:"provider"`
-	auth         []AuthConfig `yaml:"auth"`
+	providerType ProviderType `yaml:"provider" json:"provider"`
+	auth         []AuthConfig `yaml:"auth" json:"auth"`
 
-	mu sync.RWMutex
+	persistenceFilePath string
+	encryptionKey       []byte
+	mu                  sync.RWMutex
+}
+
+type ProviderConfigJSON struct {
+	ProviderType ProviderType `json:"provider"`
+	Auth         []AuthConfig `json:"auth"`
+}
+
+func (c *ProviderConfig) saveToJSON() error {
+	if c.persistenceFilePath == "" {
+		return nil // No persistence file set, skip saving
+	}
+
+	// Prepare a copy of the config for marshaling to avoid holding the lock during file I/O
+	configCopy := ProviderConfigJSON{
+		ProviderType: c.providerType,
+		Auth:         make([]AuthConfig, len(c.auth)),
+	}
+	copy(configCopy.Auth, c.auth)
+
+	data, err := json.MarshalIndent(configCopy, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config to JSON: %w", err)
+	}
+
+	encrypted, err := Encrypt(data, c.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt config JSON: %w", err)
+	}
+
+	// Write to a temporary file first, then rename to prevent corruption during write
+	tempFile := c.persistenceFilePath + ".tmp"
+	if err := os.WriteFile(tempFile, encrypted, 0644); err != nil {
+		return fmt.Errorf("failed to write config to temp file: %w", err)
+	}
+
+	if err := os.Rename(tempFile, c.persistenceFilePath); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
 }
 
 func (c *ProviderConfig) AddConfig(address string, authConfig AuthConfig) {
@@ -42,22 +84,32 @@ func (c *ProviderConfig) AddConfig(address string, authConfig AuthConfig) {
 	defer c.mu.Unlock()
 
 	c.auth = append(c.auth, authConfig)
+
+	// Attempt to persist to JSON file
+	if c.persistenceFilePath != "" {
+		// Save to JSON while holding the lock
+		_ = c.saveToJSON()
+	}
 }
 
 func (c *ProviderConfig) RemoveConfig(address string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	nexAuthCfg := make([]AuthConfig, 0, len(c.auth))
+	newAuthCfg := make([]AuthConfig, 0, len(c.auth))
 
 	for _, ac := range c.auth {
 		if ac.FromAddress.Hex() != address {
-			nexAuthCfg = append(nexAuthCfg, ac)
+			newAuthCfg = append(newAuthCfg, ac)
 		}
 	}
 
-	c.auth = nexAuthCfg
+	c.auth = newAuthCfg
 
+	// Attempt to persist to JSON file
+	if c.persistenceFilePath != "" {
+		_ = c.saveToJSON()
+	}
 }
 
 func (c *ProviderConfig) GetConfigByPath(path string) (*AuthConfig, error) {
@@ -99,38 +151,96 @@ func (c *ProviderConfig) Auth() []AuthConfig {
 	return res
 }
 
-func ReadConfig(path string) (*ProviderConfig, error) {
-	config := ProviderConfig{}
-	data, err := os.ReadFile(path)
+func tryToReadConfigFromRawJSON(data []byte, encryptionKey []byte) *ProviderConfigJSON {
+
+	// try to decrypt the json raw data
+	// Create a temporary config to unmarshal to
+	tempConfig := ProviderConfigJSON{}
+
+	if err := json.Unmarshal(data, &tempConfig); err != nil {
+		return nil
+	}
+
+	if tempConfig.ProviderType != "" && len(tempConfig.Auth) > 0 && tempConfig.Auth[0].KeyName != "" {
+		return &tempConfig
+	}
+
+	return nil
+}
+
+func readConfigFromJSON(encrypted []byte, encryptionKey []byte) (*ProviderConfigJSON, error) {
+	jsonConfig := tryToReadConfigFromRawJSON(encrypted, encryptionKey)
+	if jsonConfig != nil {
+		return jsonConfig, nil
+	}
+
+	// Decrypt data
+	data, err := Decrypt(encrypted, encryptionKey)
 	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt config: %w", err)
+	}
+
+	jsonConfigFromDecrypted := tryToReadConfigFromRawJSON(data, encryptionKey)
+	if jsonConfigFromDecrypted != nil {
+		return jsonConfigFromDecrypted, nil
+	}
+
+	// Empty config
+	return &ProviderConfigJSON{}, nil
+}
+
+// ReadConfigFromJSON reads a ProviderConfig from a JSON file
+func ReadConfigFromJSON(path string, encryptionKey []byte) (*ProviderConfig, error) {
+	// Check if file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return &ProviderConfig{
+			providerType:        KeyProviderVault1Pass,
+			auth:                make([]AuthConfig, 0, 16),
+			encryptionKey:       encryptionKey,
+			persistenceFilePath: path,
+		}, nil
+	}
+
+	encrypted, err := os.ReadFile(path)
+	if err != nil {
+		config := ProviderConfig{}
 		return &config, err
 	}
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return &config, err
+
+	tempConfig, err := readConfigFromJSON(encrypted, encryptionKey)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &ProviderConfig{
+		providerType:        tempConfig.ProviderType,
+		auth:                tempConfig.Auth,
+		encryptionKey:       encryptionKey,
+		persistenceFilePath: path,
 	}
 
 	// Default to GCP if Provider is empty
 	if config.providerType == "" {
-		config.providerType = KeyProviderGCP
+		config.providerType = KeyProviderVault1Pass
 	}
 
 	if !config.providerType.IsValid() {
-		return &config, fmt.Errorf("invalid provider '%s' in config. Must be 'AWS', 'GCP', 'LOCAL', or 'LOCALKEY'", config.providerType)
+		return config, fmt.Errorf("invalid provider '%s' in config. Must be 'AWS', 'GCP', 'LOCAL', or 'LOCALKEY'", config.providerType)
 	}
 
 	for _, authConfig := range config.auth {
 		for _, toAddress := range authConfig.ToAddresses {
 			if _, err := hexutil.Decode(toAddress); err != nil {
-				return &config, fmt.Errorf("invalid toAddress '%s' in auth config: %w", toAddress, err)
+				return config, fmt.Errorf("invalid toAddress '%s' in auth config: %w", toAddress, err)
 			}
 			if authConfig.MaxValue != "" {
 				if _, err := hexutil.DecodeBig(authConfig.MaxValue); err != nil {
-					return &config, fmt.Errorf("invalid maxValue '%s' in auth config: %w", toAddress, err)
+					return config, fmt.Errorf("invalid maxValue '%s' in auth config: %w", toAddress, err)
 				}
 			}
 		}
 	}
-	return &config, err
+	return config, err
 }
 
 func (s *ProviderConfig) GetAuthConfigForClient(clientName string, fromAddress *common.Address) (*AuthConfig, error) {

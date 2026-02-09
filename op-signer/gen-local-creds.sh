@@ -99,7 +99,7 @@ EOF
         -CAkey "$CA_KEY" \
         -CAcreateserial \
         -out "$clientDir/$CLIENT_TLS_CERT" \
-        -days 3 \
+        -days 300 \
         -extensions san \
         -extfile "$confFile"
 }
