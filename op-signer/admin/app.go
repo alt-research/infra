@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/ethereum-optimism/infra/op-signer/provider"
 	"github.com/ethereum-optimism/optimism/op-service/httputil"
 	opmetrics "github.com/ethereum-optimism/optimism/op-service/metrics"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
@@ -42,15 +43,15 @@ func (s *AdminApp) Service() *AdminService {
 	return s.service
 }
 
-func (s *AdminApp) Init(cfg *Config) error {
-	if err := s.initRPC(cfg); err != nil {
+func (s *AdminApp) Init(cfg *Config, providerConfig *provider.ProviderConfig) error {
+	if err := s.initRPC(cfg, providerConfig); err != nil {
 		return fmt.Errorf("failed to initialize RPC: %w", err)
 	}
 
 	return nil
 }
 
-func (s *AdminApp) initRPC(cfg *Config) error {
+func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig) error {
 	var httpOptions = []httputil.Option{}
 
 	if cfg.TLSConfig.Enabled {
@@ -99,7 +100,7 @@ func (s *AdminApp) initRPC(cfg *Config) error {
 	)
 
 	var err error
-	s.service, err = NewAdminService(s.log)
+	s.service, err = NewAdminService(s.log, providerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create signer service: %w", err)
 	}

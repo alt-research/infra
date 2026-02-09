@@ -12,7 +12,7 @@ import (
 
 type AltService struct {
 	logger   log.Logger
-	config   provider.ProviderConfig
+	config   *provider.ProviderConfig
 	provider provider.SignatureProvider
 }
 

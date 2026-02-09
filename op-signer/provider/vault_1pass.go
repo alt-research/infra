@@ -16,7 +16,7 @@ import (
 // VaultOnePassSignatureProvider implements SignatureProvider using local private keys
 type VaultOnePassSignatureProvider struct {
 	logger log.Logger
-	config ProviderConfig
+	config *ProviderConfig
 
 	mu     sync.RWMutex
 	keyMap map[string]*ecdsa.PrivateKey
@@ -26,7 +26,7 @@ type VaultOnePassSignatureProvider struct {
 }
 
 // NewVaultOnePassSignatureProvider creates a new VaultOnePassSignatureProvider and loads all configured keys
-func NewVaultOnePassSignatureProvider(logger log.Logger, config ProviderConfig) (SignatureProvider, error) {
+func NewVaultOnePassSignatureProvider(logger log.Logger, config *ProviderConfig) (SignatureProvider, error) {
 	// Load Vault authentication configuration
 	authCfg := vault.LoadVaultAuthConfig(logger)
 
@@ -47,7 +47,8 @@ func NewVaultOnePassSignatureProvider(logger log.Logger, config ProviderConfig) 
 	}
 
 	// Load all keys during construction
-	for _, auth := range config.Auth {
+	auths := config.Auth()
+	for _, auth := range auths {
 		if err := provider.tryLoadKey(auth.KeyName); err != nil {
 			return nil, fmt.Errorf("failed to load key '%s': %w", auth.KeyName, err)
 		}

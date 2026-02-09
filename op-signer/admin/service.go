@@ -3,9 +3,10 @@ package admin
 import (
 	"context"
 	"fmt"
-	"sync"
 
+	"github.com/ethereum-optimism/infra/op-signer/provider"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -13,14 +14,13 @@ import (
 type AdminService struct {
 	logger log.Logger
 
-	keyConfig map[string]*KeyConfig // address -> key config
-	mu        sync.RWMutex          // protects keyConfig
+	providerConfig *provider.ProviderConfig
 }
 
-func NewAdminService(logger log.Logger) (*AdminService, error) {
+func NewAdminService(logger log.Logger, providerConfig *provider.ProviderConfig) (*AdminService, error) {
 	return &AdminService{
-		logger:    logger,
-		keyConfig: make(map[string]*KeyConfig),
+		logger:         logger,
+		providerConfig: providerConfig,
 	}, nil
 }
 
@@ -31,72 +31,79 @@ func (s *AdminService) RegisterAPIs(server *oprpc.Server) {
 	})
 }
 
-func (s *AdminService) GetConfigs(_ context.Context) (map[string]KeyConfig, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *AdminService) makeKeyConfig() map[string]KeyConfig {
+	auths := s.providerConfig.Auth()
 
-	configCopy := make(map[string]KeyConfig)
-	for addr, cfg := range s.keyConfig {
-		configCopy[addr] = *cfg
+	cfg := make(map[string]KeyConfig, len(auths))
+	for _, authConfig := range auths {
+		cfg[authConfig.FromAddress.Hex()] = KeyConfig{
+			AllowedClientCN: authConfig.AllowedClientCN,
+			ParentChainID:   authConfig.ChainID,
+			Path:            authConfig.KeyName,
+		}
 	}
+	return cfg
+}
 
-	return configCopy, nil
+func (s *AdminService) GetConfigs(_ context.Context) (map[string]KeyConfig, error) {
+	return s.makeKeyConfig(), nil
 }
 
 func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig KeyConfig) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.logger.Info("adding new key config",
 		"address", address,
 		"path", keyConfig.Path,
 		"chainId", keyConfig.ParentChainID,
 		"allowedClientCN", keyConfig.AllowedClientCN)
 
-	if _, ok := s.keyConfig[keyConfig.AllowedClientCN]; ok {
+	if res, err := s.GetConfigForPath(keyConfig.Path); err == nil && res != nil {
 		return "", fmt.Errorf("key already exists")
 	}
 
-	s.keyConfig[address] = &keyConfig
+	newAuthConfig := provider.AuthConfig{
+		AllowedClientCN: keyConfig.AllowedClientCN,
+		ChainID:         keyConfig.ParentChainID,
+		ClientName:      keyConfig.Path,
+		FromAddress:     common.HexToAddress(address),
+		KeyName:         keyConfig.Path,
+		MaxValue:        "",
+		ToAddresses:     nil,
+	}
+
+	s.providerConfig.AddConfig(address, newAuthConfig)
 
 	return keyConfig.AllowedClientCN, nil
 }
 
 func (s *AdminService) RemoveConfig(_ context.Context, address string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.keyConfig[address]; !ok {
-		return "", fmt.Errorf("key does not exist")
-	}
-
-	delete(s.keyConfig, address)
+	s.providerConfig.RemoveConfig(address)
 
 	return address, nil
 }
 
 func (s *AdminService) GetConfigForAddress(address string) (*KeyConfig, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	keyConfig, ok := s.keyConfig[address]
-	if !ok {
-		return nil, fmt.Errorf("key does not exist")
+	authConfig, err := s.providerConfig.GetConfigByAddress(address)
+	if err != nil {
+		return nil, err
 	}
 
-	return keyConfig, nil
+	return &KeyConfig{
+		AllowedClientCN: authConfig.AllowedClientCN,
+		ParentChainID:   authConfig.ChainID,
+		Path:            authConfig.KeyName,
+	}, nil
 }
 
 func (s *AdminService) GetConfigForPath(path string) (*KeyConfig, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	authConfig, err := s.providerConfig.GetConfigByPath(path)
 
-	for _, keyConfig := range s.keyConfig {
-		if keyConfig.Path == path {
-			return keyConfig, nil
-		}
-
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("key does not exist")
+	return &KeyConfig{
+		AllowedClientCN: authConfig.AllowedClientCN,
+		ParentChainID:   authConfig.ChainID,
+		Path:            authConfig.KeyName,
+	}, nil
 }

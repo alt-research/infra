@@ -29,19 +29,19 @@ type SignerService struct {
 
 type EthService struct {
 	logger       log.Logger
-	config       provider.ProviderConfig
+	config       *provider.ProviderConfig
 	provider     provider.SignatureProvider
 	adminService *admin.AdminService
 }
 
 type OpsignerService struct {
 	logger   log.Logger
-	config   provider.ProviderConfig
+	config   *provider.ProviderConfig
 	provider provider.SignatureProvider
 }
 
-func NewSignerService(logger log.Logger, config provider.ProviderConfig, adminService *admin.AdminService) (*SignerService, error) {
-	provider, err := provider.NewSignatureProvider(logger, config.ProviderType, config)
+func NewSignerService(logger log.Logger, config *provider.ProviderConfig, adminService *admin.AdminService) (*SignerService, error) {
+	provider, err := provider.NewSignatureProvider(logger, config.Type(), config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signature provider: %w", err)
 	}
@@ -50,7 +50,7 @@ func NewSignerService(logger log.Logger, config provider.ProviderConfig, adminSe
 
 func NewSignerServiceWithProvider(
 	logger log.Logger,
-	config provider.ProviderConfig,
+	config *provider.ProviderConfig,
 	provider provider.SignatureProvider,
 	adminService *admin.AdminService,
 ) *SignerService {

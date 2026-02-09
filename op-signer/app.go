@@ -68,12 +68,18 @@ func (s *SignerApp) init(cfg *Config) error {
 	if err := s.initMetrics(cfg); err != nil {
 		return fmt.Errorf("metrics error: %w", err)
 	}
+
+	providerCfg, err := provider.ReadConfig(cfg.ServiceConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read provider config: %w", err)
+	}
+
 	if cfg.AdminConfig.Enabled {
-		if err := s.initAdmin(cfg); err != nil {
+		if err := s.initAdmin(cfg, providerCfg); err != nil {
 			return fmt.Errorf("admin error: %w", err)
 		}
 	}
-	if err := s.initRPC(cfg); err != nil {
+	if err := s.initRPC(cfg, providerCfg); err != nil {
 		return fmt.Errorf("rpc error: %w", err)
 	}
 	return nil
@@ -119,7 +125,7 @@ func (s *SignerApp) initMetrics(cfg *Config) error {
 	return nil
 }
 
-func (s *SignerApp) initRPC(cfg *Config) error {
+func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) error {
 	var httpOptions = []httputil.Option{}
 
 	if cfg.TLSConfig.Enabled {
@@ -170,27 +176,11 @@ func (s *SignerApp) initRPC(cfg *Config) error {
 		},
 	)
 
-	providerCfg, err := provider.ReadConfig(cfg.ServiceConfigPath)
-	if err != nil {
-		return fmt.Errorf("failed to read provider config: %w", err)
-	}
+	var err error
 
 	var adminService *admin.AdminService
 	if s.adminApp != nil {
 		adminService = s.adminApp.Service()
-		for _, authCfg := range providerCfg.Auth {
-			if authCfg.FromAddress != common.Address([common.AddressLength]byte{}) {
-				cfg := admin.KeyConfig{
-					AllowedClientCN: authCfg.AllowedClientCN,
-					ParentChainID:   authCfg.ChainID,
-					Path:            authCfg.ClientName,
-				}
-
-				if _, err := adminService.AddConfig(context.TODO(), authCfg.FromAddress.String(), cfg); err != nil {
-					return fmt.Errorf("failed to add config for address %s: %w", authCfg.FromAddress.String(), err)
-				}
-			}
-		}
 	}
 
 	s.signer, err = service.NewSignerService(s.log, providerCfg, adminService)
@@ -207,11 +197,11 @@ func (s *SignerApp) initRPC(cfg *Config) error {
 	return nil
 }
 
-func (s *SignerApp) initAdmin(cfg *Config) error {
+func (s *SignerApp) initAdmin(cfg *Config, providerCfg *provider.ProviderConfig) error {
 	s.adminApp = admin.NewAdminApp(s.log, s.registry)
 	s.adminApp.SetVersion(s.version)
 
-	if err := s.adminApp.Init(&cfg.AdminConfig); err != nil {
+	if err := s.adminApp.Init(&cfg.AdminConfig, providerCfg); err != nil {
 		return fmt.Errorf("failed to initialize admin app: %w", err)
 	}
 

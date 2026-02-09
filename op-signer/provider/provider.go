@@ -35,16 +35,12 @@ func (k ProviderType) IsValid() bool {
 }
 
 // NewSignatureProvider creates a new SignatureProvider based on the provider type
-func NewSignatureProvider(logger log.Logger, providerType ProviderType, config ProviderConfig) (SignatureProvider, error) {
+func NewSignatureProvider(logger log.Logger, providerType ProviderType, config *ProviderConfig) (SignatureProvider, error) {
 	switch providerType {
 	case KeyProviderGCP:
 		return NewGCPKMSSignatureProvider(logger)
 	case KeyProviderAWS:
 		return NewAWSKMSSignatureProvider(logger)
-	case KeyProviderLocal:
-		return NewLocalKMSSignatureProvider(logger, config)
-	case KeyProviderLocalKey:
-		return NewLocalPrivateKeySignatureProvider(logger, config)
 	case KeyProviderVault1Pass:
 		return NewVaultOnePassSignatureProvider(logger, config)
 	default:
