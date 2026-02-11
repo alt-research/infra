@@ -3,12 +3,14 @@ package admin
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/ethereum-optimism/infra/op-signer/auth"
 	"github.com/ethereum-optimism/infra/op-signer/provider"
 	"github.com/ethereum-optimism/optimism/op-service/httputil"
 	opmetrics "github.com/ethereum-optimism/optimism/op-service/metrics"
@@ -85,6 +87,12 @@ func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig)
 		s.log.Warn("TLS disabled. This is insecure and only supported for local development. Please enable TLS in production environments!")
 	}
 
+	// Get API password hash (bcrypt hash of the password)
+	apiPasswordHash := os.Getenv("API_PASSWORD_HASH")
+	if apiPasswordHash == "" {
+		return errors.New("API_PASSWORD_HASH environment variable is required")
+	}
+
 	rpcCfg := cfg.RPCConfig
 	s.rpc = oprpc.ServerFromConfig(
 		&oprpc.ServerConfig{
@@ -92,6 +100,7 @@ func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig)
 			Host:       rpcCfg.ListenAddr,
 			Port:       rpcCfg.ListenPort,
 			RpcOptions: []oprpc.Option{
+				oprpc.WithMiddleware(auth.NewAuthByPasswordMiddleware(s.log, []byte(apiPasswordHash))),
 				oprpc.WithHTTPRecorder(opmetrics.NewPromHTTPRecorder(s.registry, "admin")),
 				oprpc.WithLogger(s.log),
 			},
