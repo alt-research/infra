@@ -226,3 +226,51 @@ curl -v  --cert ./tls/127.0.0.1/tls.crt --key ./tls/127.0.0.1/tls.key --cacert .
     "id": 1
   }'
 ```
+
+### 3. Admin API
+
+Before deploying, generate a bcrypt hash of your API password:
+
+```bash
+cd tools
+go run generate-hash.go "your-secure-password"
+```
+
+
+This outputs:
+```
+=== Bcrypt Password Hash Generated ===
+
+Password: your-secure-password
+Hash:     $2a$10$Ad4Fbf04TQLCb0gW0SvMNO8I3YDTLCQLk7M05rzCs10wcFjygit/W
+
+Add this hash to your StatefulSet YAML:
+  - name: API_PASSWORD_HASH
+    value: "$2a$10$Ad4Fbf04TQLCb0gW0SvMNO8I3YDTLCQLk7M05rzCs10wcFjygit/W"
+```
+
+**Security Note:** The bcrypt hash can be safely committed to Git. It cannot be reversed to obtain the password. Only users who know the original password can authenticate to the API.
+
+NOTE: if use export, please use `\` before `$`.
+
+Use cmd:
+
+```bash
+./bin/op-signer admin --admin.password 123456 --admin.tls.cert ./tls/localhost/tls.crt --admin.tls.key ./tls/localhost/tls.key --admin.tls.ca ./tls/ca.crt get-configs
+{
+  "0x0000000000000000000000000000000000000000": {
+    "path": "op/vaults/testsign/items/testnet/t1",
+    "parent_chain_id": 1,
+    "allowed_client_cn": "localhost"
+  }
+}
+```
+
+```bash
+ ./bin/op-signer admin --admin.password 123456 --admin.tls.cert ./tls/localhost/tls.crt --admin.tls.key ./tls/localhost/tls.key --admin.tls.ca ./tls/ca.crt add-config --address 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --allowed-client-cn 111 --parent-chain-id 1 --path op/vaults/testsign/items/testnet/t2
+"111"
+```
+
+```bash
+./bin/op-signer admin --admin.password 123456 --admin.tls.cert ./tls/localhost/tls.crt --admin.tls.key ./tls/localhost/tls.key --admin.tls.ca ./tls/ca.crt remove-config --address 0x0000000000000000000000000000000000000000
+```
