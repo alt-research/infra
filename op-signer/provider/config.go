@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -33,6 +34,7 @@ func (c AuthConfig) MaxValueToInt() *big.Int {
 type ProviderConfig struct {
 	providerType ProviderType `yaml:"provider" json:"provider"`
 	auth         []AuthConfig `yaml:"auth" json:"auth"`
+	pathPrefix   string       `yaml:"path_prefix" json:"path_prefix"`
 
 	persistenceFilePath string
 	encryptionKey       []byte
@@ -42,6 +44,44 @@ type ProviderConfig struct {
 type ProviderConfigJSON struct {
 	ProviderType ProviderType `json:"provider"`
 	Auth         []AuthConfig `json:"auth"`
+}
+
+func TryExtractPath(url string, pathRootPrefix string) string {
+	subPath := strings.Split(url, "/")
+
+	res := make([]string, 0, len(subPath)+2)
+
+	if pathRootPrefix != "" {
+		pathRoots := strings.Split(pathRootPrefix, "/")
+		pathRoots = append(pathRoots, subPath...)
+		subPath = pathRoots
+	}
+
+	for i := 0; i < len(subPath); i++ {
+		if subPath[i] != "" {
+			res = append(res, subPath[i])
+		}
+	}
+
+	return strings.Join(res, "/")
+}
+
+func MakeFullPath(pathRootPrefix string, url string) string {
+	return TryExtractPath(url, pathRootPrefix)
+}
+
+func (c *ProviderConfig) SetPathPrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.pathPrefix = prefix
+}
+
+func (c *ProviderConfig) PathPrefix() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.pathPrefix
 }
 
 func (c *ProviderConfig) saveToJSON() error {

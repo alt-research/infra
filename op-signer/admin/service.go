@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ethereum-optimism/infra/op-signer/provider"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
@@ -49,6 +50,15 @@ func (s *AdminService) GetConfigs(_ context.Context) (map[string]KeyConfig, erro
 	return s.makeKeyConfig(), nil
 }
 
+func (s *AdminService) tryAddPathPrefix(path string) string {
+	pathRootPrefix := s.providerConfig.PathPrefix()
+	if strings.HasPrefix(path, pathRootPrefix) {
+		return path
+	}
+
+	return provider.MakeFullPath(pathRootPrefix, path)
+}
+
 func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig KeyConfig) (string, error) {
 	s.logger.Info("adding new key config",
 		"address", address,
@@ -56,16 +66,18 @@ func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig Ke
 		"chainId", keyConfig.ParentChainID,
 		"allowedClientCN", keyConfig.AllowedClientCN)
 
-	if res, err := s.GetConfigForPath(keyConfig.Path); err == nil && res != nil {
+	path := s.tryAddPathPrefix(keyConfig.Path)
+
+	if res, err := s.GetConfigForPath(path); err == nil && res != nil {
 		return "", fmt.Errorf("key already exists")
 	}
 
 	newAuthConfig := provider.AuthConfig{
 		AllowedClientCN: keyConfig.AllowedClientCN,
 		ChainID:         keyConfig.ParentChainID,
-		ClientName:      keyConfig.Path,
+		ClientName:      path,
 		FromAddress:     common.HexToAddress(address),
-		KeyName:         keyConfig.Path,
+		KeyName:         path,
 		MaxValue:        "",
 		ToAddresses:     nil,
 	}
@@ -95,6 +107,7 @@ func (s *AdminService) GetConfigForAddress(address string) (*KeyConfig, error) {
 }
 
 func (s *AdminService) GetConfigForPath(path string) (*KeyConfig, error) {
+	path = s.tryAddPathPrefix(path)
 	authConfig, err := s.providerConfig.GetConfigByPath(path)
 
 	if err != nil {

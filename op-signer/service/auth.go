@@ -5,8 +5,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 
+	"github.com/ethereum-optimism/infra/op-signer/provider"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -18,30 +18,6 @@ type ClientInfo struct {
 
 type clientInfoContextKey struct{}
 
-func tryExtractPath(url string, pathRootPrefix string) string {
-	subPath := strings.Split(url, "/")
-
-	res := make([]string, 0, len(subPath)+2)
-
-	if pathRootPrefix != "" {
-		pathRoots := strings.Split(pathRootPrefix, "/")
-		pathRoots = append(pathRoots, subPath...)
-		subPath = pathRoots
-	}
-
-	for i := 0; i < len(subPath); i++ {
-		if subPath[i] != "" {
-			res = append(res, subPath[i])
-		}
-	}
-
-	return strings.Join(res, "/")
-}
-
-func MakeFullPath(pathRootPrefix string, url string) string {
-	return tryExtractPath(url, pathRootPrefix)
-}
-
 func NewAuthMiddleware(logger log.Logger, pathRootPrefix string) oprpc.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +25,7 @@ func NewAuthMiddleware(logger log.Logger, pathRootPrefix string) oprpc.Middlewar
 
 			logger.Debug("handler request", "r", r.Method, "host", r.Host, "ru", r.URL.String())
 
-			subPath := tryExtractPath(r.URL.Path, pathRootPrefix)
+			subPath := provider.TryExtractPath(r.URL.Path, pathRootPrefix)
 			if subPath != "" {
 				// NOTE: need use root path for rpc client
 				r.URL = &url.URL{Path: ""}

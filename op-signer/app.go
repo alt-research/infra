@@ -36,7 +36,8 @@ import (
 type SignerApp struct {
 	log log.Logger
 
-	version string
+	version        string
+	pathRootPrefix string
 
 	pprofServer   *oppprof.Service
 	metricsServer *httputil.HTTPServer
@@ -69,6 +70,8 @@ func (s *SignerApp) init(cfg *Config) error {
 		return fmt.Errorf("metrics error: %w", err)
 	}
 
+	s.pathRootPrefix = os.Getenv("OP_SIGNER_VAULT_ROOT_PATH_PREFIX")
+
 	// Get API password hash (bcrypt hash of the password)
 	apiPasswordHash := os.Getenv("API_PASSWORD_HASH")
 	if apiPasswordHash == "" {
@@ -86,6 +89,7 @@ func (s *SignerApp) init(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to read provider config from JSON: %w", err)
 	}
+	providerCfg.SetPathPrefix(s.pathRootPrefix)
 
 	if cfg.AdminConfig.Enabled {
 		if err := s.initAdmin(cfg, providerCfg); err != nil {
@@ -172,8 +176,6 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 		s.log.Warn("TLS disabled. This is insecure and only supported for local development. Please enable TLS in production environments!")
 	}
 
-	pathRootPrefix := os.Getenv("OP_SIGNER_VAULT_ROOT_PATH_PREFIX")
-
 	rpcCfg := cfg.RPCConfig
 	s.rpc = oprpc.ServerFromConfig(
 		&oprpc.ServerConfig{
@@ -181,7 +183,7 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 			Host:       rpcCfg.ListenAddr,
 			Port:       rpcCfg.ListenPort,
 			RpcOptions: []oprpc.Option{
-				oprpc.WithMiddleware(service.NewAuthMiddleware(s.log.With("module", "authMiddleware"), pathRootPrefix)),
+				oprpc.WithMiddleware(service.NewAuthMiddleware(s.log.With("module", "authMiddleware"), s.pathRootPrefix)),
 				oprpc.WithHTTPRecorder(opmetrics.NewPromHTTPRecorder(s.registry, "signer")),
 				oprpc.WithLogger(s.log),
 			},
