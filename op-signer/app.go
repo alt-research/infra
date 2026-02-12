@@ -85,10 +85,14 @@ func (s *SignerApp) init(cfg *Config) error {
 	// Check if config file is JSON or YAML to determine which reader to use
 	var providerCfg *provider.ProviderConfig
 	var err error
-	providerCfg, err = provider.ReadConfigFromJSON(cfg.ServiceConfigPath, encryptionKey)
+
+	s.log.Info("Reading provider config", "path", cfg.ServiceConfigPath)
+	providerCfg, err = provider.ReadConfigFromJSON(s.log, cfg.ServiceConfigPath, encryptionKey)
 	if err != nil {
 		return fmt.Errorf("failed to read provider config from JSON: %w", err)
 	}
+	s.log.Info("Successfully read provider config", "provider", providerCfg.Type())
+
 	providerCfg.SetPathPrefix(s.pathRootPrefix)
 
 	if cfg.AdminConfig.Enabled {

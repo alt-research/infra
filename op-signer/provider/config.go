@@ -11,6 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 type AuthConfig struct {
@@ -230,9 +231,10 @@ func readConfigFromJSON(encrypted []byte, encryptionKey []byte) (*ProviderConfig
 }
 
 // ReadConfigFromJSON reads a ProviderConfig from a JSON file
-func ReadConfigFromJSON(path string, encryptionKey []byte) (*ProviderConfig, error) {
+func ReadConfigFromJSON(log log.Logger, path string, encryptionKey []byte) (*ProviderConfig, error) {
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		log.Info("Config file does not exist, creating default config", "path", path)
 		return &ProviderConfig{
 			providerType:        KeyProviderVault1Pass,
 			auth:                make([]AuthConfig, 0, 16),
@@ -244,13 +246,17 @@ func ReadConfigFromJSON(path string, encryptionKey []byte) (*ProviderConfig, err
 	encrypted, err := os.ReadFile(path)
 	if err != nil {
 		config := ProviderConfig{}
+		log.Error("Failed to read config file", "path", path, "error", err)
 		return &config, err
 	}
 
 	tempConfig, err := readConfigFromJSON(encrypted, encryptionKey)
 	if err != nil {
+		log.Error("Failed to read config from JSON", "path", path, "error", err)
 		return nil, err
 	}
+
+	log.Debug("Successfully read config from JSON", "path", path)
 
 	config := &ProviderConfig{
 		providerType:        tempConfig.ProviderType,
