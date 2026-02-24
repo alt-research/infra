@@ -45,6 +45,9 @@ func NewSignerService(logger log.Logger, config *provider.ProviderConfig, adminS
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signature provider: %w", err)
 	}
+
+	adminService.SetKeysProvider(provider)
+
 	return NewSignerServiceWithProvider(logger, config, provider, adminService), nil
 }
 

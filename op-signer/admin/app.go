@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -17,6 +18,10 @@ import (
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
 	"github.com/ethereum-optimism/optimism/op-service/tls/certman"
 )
+
+type KeysProvider interface {
+	GetPublicKey(ctx context.Context, keyName string) ([]byte, error)
+}
 
 type AdminApp struct {
 	log log.Logger

@@ -133,12 +133,12 @@ func (c *AdminClient) call(method string, params []any) (json.RawMessage, error)
 }
 
 // GetConfigs returns all key configurations
-func (c *AdminClient) GetConfigs() (map[string]KeyConfig, error) {
+func (c *AdminClient) GetConfigs() ([]KeyConfig, error) {
 	result, err := c.call("admin_getConfigs", nil)
 	if err != nil {
 		return nil, err
 	}
-	var configs map[string]KeyConfig
+	var configs []KeyConfig
 	if err := json.Unmarshal(result, &configs); err != nil {
 		return nil, fmt.Errorf("unmarshaling configs: %w", err)
 	}
@@ -146,8 +146,20 @@ func (c *AdminClient) GetConfigs() (map[string]KeyConfig, error) {
 }
 
 // AddConfig adds a new key configuration for the given address
-func (c *AdminClient) AddConfig(address string, keyConfig KeyConfig) (string, error) {
-	result, err := c.call("admin_addConfig", []any{address, keyConfig})
+func (c *AdminClient) AddConfig(keyConfig KeyConfig) (string, error) {
+	result, err := c.call("admin_addConfig", []any{keyConfig})
+	if err != nil {
+		return "", err
+	}
+	var msg string
+	if err := json.Unmarshal(result, &msg); err != nil {
+		return "", fmt.Errorf("unmarshaling result: %w", err)
+	}
+	return msg, nil
+}
+
+func (c *AdminClient) RemoveConfigByPath(path string) (string, error) {
+	result, err := c.call("admin_removeConfigByPath", []any{path})
 	if err != nil {
 		return "", err
 	}

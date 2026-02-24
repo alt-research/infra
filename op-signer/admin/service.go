@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum-optimism/infra/op-signer/provider"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -16,6 +17,7 @@ type AdminService struct {
 	logger log.Logger
 
 	providerConfig *provider.ProviderConfig
+	keys           KeysProvider
 }
 
 func NewAdminService(logger log.Logger, providerConfig *provider.ProviderConfig) (*AdminService, error) {
@@ -25,6 +27,10 @@ func NewAdminService(logger log.Logger, providerConfig *provider.ProviderConfig)
 	}, nil
 }
 
+func (s *AdminService) SetKeysProvider(keys KeysProvider) {
+	s.keys = keys
+}
+
 func (s *AdminService) RegisterAPIs(server *oprpc.Server) {
 	server.AddAPI(rpc.API{
 		Namespace: "admin",
@@ -32,21 +38,23 @@ func (s *AdminService) RegisterAPIs(server *oprpc.Server) {
 	})
 }
 
-func (s *AdminService) makeKeyConfig() map[string]KeyConfig {
+func (s *AdminService) makeKeyConfig() []KeyConfig {
 	auths := s.providerConfig.Auth()
 
-	cfg := make(map[string]KeyConfig, len(auths))
+	cfg := make([]KeyConfig, 0, len(auths))
 	for _, authConfig := range auths {
-		cfg[authConfig.FromAddress.Hex()] = KeyConfig{
-			AllowedClientCN: authConfig.AllowedClientCN,
-			ParentChainID:   authConfig.ChainID,
-			Path:            authConfig.KeyName,
+		if authConfig.KeyName != "" {
+			cfg = append(cfg, KeyConfig{
+				AllowedClientCN: authConfig.AllowedClientCN,
+				ParentChainID:   authConfig.ChainID,
+				Path:            authConfig.KeyName,
+			})
 		}
 	}
 	return cfg
 }
 
-func (s *AdminService) GetConfigs(_ context.Context) (map[string]KeyConfig, error) {
+func (s *AdminService) GetConfigs(_ context.Context) ([]KeyConfig, error) {
 	return s.makeKeyConfig(), nil
 }
 
@@ -59,9 +67,8 @@ func (s *AdminService) tryAddPathPrefix(path string) string {
 	return provider.MakeFullPath(pathRootPrefix, path)
 }
 
-func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig KeyConfig) (string, error) {
+func (s *AdminService) AddConfig(ctx context.Context, keyConfig KeyConfig) (string, error) {
 	s.logger.Info("adding new key config",
-		"address", address,
 		"path", keyConfig.Path,
 		"chainId", keyConfig.ParentChainID,
 		"allowedClientCN", keyConfig.AllowedClientCN)
@@ -71,6 +78,22 @@ func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig Ke
 	if res, err := s.GetConfigForPath(path); err == nil && res != nil {
 		return "", fmt.Errorf("key already exists")
 	}
+
+	publicKey, err := s.keys.GetPublicKey(ctx, path)
+	if err != nil {
+		return "", fmt.Errorf("getting public key for path '%s': %w", path, err)
+	}
+
+	key, err := crypto.UnmarshalPubkey(publicKey)
+	if err != nil {
+		return "", fmt.Errorf("unmarshaling public key: %w", err)
+	}
+
+	if key == nil {
+		return "", fmt.Errorf("unmarshaled public key is nil")
+	}
+
+	address := crypto.PubkeyToAddress(*key).Hex()
 
 	newAuthConfig := provider.AuthConfig{
 		AllowedClientCN: keyConfig.AllowedClientCN,
@@ -84,7 +107,13 @@ func (s *AdminService) AddConfig(_ context.Context, address string, keyConfig Ke
 
 	s.providerConfig.AddConfig(address, newAuthConfig)
 
-	return keyConfig.AllowedClientCN, nil
+	return address, nil
+}
+
+func (s *AdminService) RemoveConfigByPath(_ context.Context, path string) (string, error) {
+	s.providerConfig.RemoveConfigByPath(path)
+
+	return path, nil
 }
 
 func (s *AdminService) RemoveConfig(_ context.Context, address string) (string, error) {

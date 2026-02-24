@@ -133,11 +133,6 @@ func main() {
 					Usage: "add a key configuration for an address",
 					Flags: []cli.Flag{
 						&cli.StringFlag{
-							Name:     "address",
-							Usage:    "address or key identifier",
-							Required: true,
-						},
-						&cli.StringFlag{
 							Name:     "path",
 							Usage:    "vault path to the key",
 							Required: true,
@@ -161,7 +156,7 @@ func main() {
 							ParentChainID:   ctx.Uint64("parent-chain-id"),
 							AllowedClientCN: ctx.String("allowed-client-cn"),
 						}
-						result, err := client.AddConfig(ctx.String("address"), keyConfig)
+						result, err := client.AddConfig(keyConfig)
 						if err != nil {
 							return fmt.Errorf("adding config: %w", err)
 						}
@@ -184,6 +179,28 @@ func main() {
 							return err
 						}
 						result, err := client.RemoveConfig(ctx.String("address"))
+						if err != nil {
+							return fmt.Errorf("removing config: %w", err)
+						}
+						return printJSON(result)
+					},
+				},
+				{
+					Name:  "remove-config-by-path",
+					Usage: "remove a key configuration by vault path",
+					Flags: []cli.Flag{
+						&cli.StringFlag{
+							Name:     "path",
+							Usage:    "vault path to remove",
+							Required: true,
+						},
+					},
+					Action: func(ctx *cli.Context) error {
+						client, err := newAdminClient(ctx)
+						if err != nil {
+							return err
+						}
+						result, err := client.RemoveConfigByPath(ctx.String("path"))
 						if err != nil {
 							return fmt.Errorf("removing config: %w", err)
 						}

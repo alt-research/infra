@@ -24,7 +24,7 @@ func TestBasicConfigOperations(t *testing.T) {
 	}
 
 	// Add the config
-	config.AddConfig("0x1234567890123456789012345678901234567890", testAuthConfig)
+	config.AddConfig(testAuthConfig.FromAddress.Hex(), testAuthConfig)
 
 	authConfigs := config.Auth()
 	if len(authConfigs) != 1 {

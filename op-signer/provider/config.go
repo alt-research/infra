@@ -153,6 +153,24 @@ func (c *ProviderConfig) RemoveConfig(address string) {
 	}
 }
 
+func (c *ProviderConfig) RemoveConfigByPath(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	newAuthCfg := make([]AuthConfig, 0, len(c.auth))
+	for _, ac := range c.auth {
+		if ac.KeyName != path {
+			newAuthCfg = append(newAuthCfg, ac)
+		}
+	}
+	c.auth = newAuthCfg
+
+	// Attempt to persist to JSON file
+	if c.persistenceFilePath != "" {
+		_ = c.saveToJSON()
+	}
+}
+
 func (c *ProviderConfig) GetConfigByPath(path string) (*AuthConfig, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
