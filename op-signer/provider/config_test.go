@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 func TestJSONPersistence(t *testing.T) {
@@ -43,8 +44,10 @@ func TestJSONPersistence(t *testing.T) {
 		t.Fatal("Config file is empty")
 	}
 
+	logger := log.NewLogger(log.DiscardHandler())
+
 	// Create a new config instance and load from the JSON file
-	loadedConfig, err := ReadConfigFromJSON(tempFile, DeriveEncryptionKey("123456"))
+	loadedConfig, err := ReadConfigFromJSON(logger, tempFile, DeriveEncryptionKey("123456"))
 	if err != nil {
 		t.Fatalf("Failed to read config from JSON: %v", err)
 	}
@@ -69,7 +72,7 @@ func TestJSONPersistence(t *testing.T) {
 	config.RemoveConfig("0x1234567890123456789012345678901234567890")
 
 	// Reload and verify it's gone
-	loadedConfig2, err := ReadConfigFromJSON(tempFile, DeriveEncryptionKey("123456"))
+	loadedConfig2, err := ReadConfigFromJSON(logger, tempFile, DeriveEncryptionKey("123456"))
 	if err != nil {
 		t.Fatalf("Failed to read config from JSON after removal: %v", err)
 	}
