@@ -127,8 +127,20 @@ func (s *SignerApp) initPprof(cfg *Config) error {
 
 func (s *SignerApp) initMetrics(cfg *Config) error {
 	registry := opmetrics.NewRegistry()
+	registry.MustRegister(service.MetricSignerUp)
+	registry.MustRegister(service.MetricSigningRequestsTotal)
+	registry.MustRegister(service.MetricSigningRequestDuration)
+	registry.MustRegister(service.MetricSigningRequestsInFlight)
+	registry.MustRegister(service.MetricConfiguredKeys)
+	registry.MustRegister(service.MetricProviderType)
+	registry.MustRegister(service.MetricSigningErrorsTotal)
+	registry.MustRegister(service.MetricRPCTotal)
 	registry.MustRegister(service.MetricSignTransactionTotal)
 	registry.MustRegister(service.MetricSignBlockPayloadTotal)
+
+	// Set the signer_up gauge to 1 to indicate service is running
+	service.MetricSignerUp.Set(1)
+
 	s.registry = registry // some things require metrics registry
 
 	if !cfg.MetricsConfig.Enabled {
@@ -207,6 +219,13 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 		return fmt.Errorf("failed to create signer service: %w", err)
 	}
 	s.signer.RegisterAPIs(s.rpc)
+
+	// Set provider type metric
+	service.MetricProviderType.WithLabelValues(string(providerCfg.Type())).Set(1)
+
+	// Set configured keys count
+	keyCount := providerCfg.GetClientCount()
+	service.MetricConfiguredKeys.Set(float64(keyCount))
 
 	if err := s.rpc.Start(); err != nil {
 		return fmt.Errorf("error starting RPC server: %w", err)

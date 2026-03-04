@@ -92,8 +92,16 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 	clientInfo := ClientInfoFromContext(ctx)
 	authConfig, err := s.config.GetAuthConfigForClient(clientInfo.ClientName, nil)
 	if err != nil {
+		MetricSigningRequestsTotal.WithLabelValues("unknown", "error").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
 		return nil, rpc.HTTPError{StatusCode: 403, Status: "Forbidden", Body: []byte(err.Error())}
 	}
+
+	// Get the from address for metrics
+	signerAddress := authConfig.FromAddress.Hex()
+	timer := NewTimer(signerAddress, "transaction")
+	MetricSigningRequestsInFlight.WithLabelValues(signerAddress).Inc()
+	defer MetricSigningRequestsInFlight.WithLabelValues(signerAddress).Dec()
 
 	labels := prometheus.Labels{"client": clientInfo.ClientName, "status": "error", "error": ""}
 	defer func() {
@@ -103,6 +111,10 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 	if err := args.Check(); err != nil {
 		s.logger.Warn("invalid signing arguments", "err", err)
 		labels["error"] = "invalid_transaction"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "invalid_transaction").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{message: err.Error()}
 	}
 
@@ -111,26 +123,46 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 		if err != nil {
 			s.logger.Warn("invalid client GetConfigForPath", "err", err)
 			labels["error"] = "invalid_client"
+			MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+			MetricSigningErrorsTotal.WithLabelValues(signerAddress, "invalid_client").Inc()
+			MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+			timer.RecordDuration("error")
 			return nil, &InvalidClientError{message: err.Error()}
 		}
 
 		if clientCN.AllowedClientCN != "" && clientCN.AllowedClientCN != clientInfo.ClientCN {
 			s.logger.Warn("client CN not authorized", "clientCN", clientInfo.ClientCN, "allowedCN", clientCN.AllowedClientCN)
 			labels["error"] = "unauthorized_client"
+			MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+			MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unauthorized_client").Inc()
+			MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+			timer.RecordDuration("error")
 			return nil, &UnauthorizedClientError{message: "client CN not authorized"}
 		}
 	}
 
 	if len(authConfig.ToAddresses) > 0 && !containsNormalized(authConfig.ToAddresses, args.To.Hex()) {
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unauthorized_to_address").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &UnauthorizedTransactionError{"to address not authorized"}
 	}
 	if len(authConfig.MaxValue) > 0 && ((*uint256.Int)(args.Value)).ToBig().Cmp(authConfig.MaxValueToInt()) > 0 {
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "value_exceeds_max").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &UnauthorizedTransactionError{"value exceeds maximum"}
 	}
 
 	txData, err := args.ToTransactionData()
 	if err != nil {
 		labels["error"] = "transaction_args_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "transaction_args_error").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{err.Error()}
 	}
 	tx := types.NewTx(txData)
@@ -141,18 +173,30 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 	signature, err := s.provider.SignDigest(ctx, authConfig.KeyName, digest.Bytes())
 	if err != nil {
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "sign_error").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{err.Error()}
 	}
 
 	signed, err := tx.WithSignature(txSigner, signature)
 	if err != nil {
 		labels["error"] = "invalid_transaction_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "invalid_transaction_error").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{err.Error()}
 	}
 
 	signerFrom, err := txSigner.Sender(signed)
 	if err != nil {
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "sign_error").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{err.Error()}
 	}
 
@@ -161,16 +205,27 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 		s.logger.Warn("user is trying to sign with different account than actual signer-provider",
 			"provider", signerFrom, "request", *args.From)
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unexpected_from_address").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{"unexpected from address"}
 	}
 
 	txraw, err := signed.MarshalBinary()
 	if err != nil {
 		labels["error"] = "transaction_marshal_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "transaction_marshal_error").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidTransactionError{err.Error()}
 	}
 
 	labels["status"] = "success"
+	MetricSigningRequestsTotal.WithLabelValues(signerAddress, "success").Inc()
+	MetricRPCTotal.WithLabelValues("eth_signTransaction", "success").Inc()
+	timer.RecordDuration("success")
 	txTo := ""
 	if tx.To() != nil {
 		txTo = tx.To().Hex()
@@ -217,8 +272,16 @@ func (s *OpsignerService) signBlockPayload(
 	clientInfo := ClientInfoFromContext(ctx)
 	authConfig, err := s.config.GetAuthConfigForClient(clientInfo.ClientName, fromAddress)
 	if err != nil {
+		MetricSigningRequestsTotal.WithLabelValues("unknown", "error").Inc()
+		MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "error").Inc()
 		return nil, rpc.HTTPError{StatusCode: 403, Status: "Forbidden", Body: []byte(err.Error())}
 	}
+
+	// Get the from address for metrics
+	signerAddress := authConfig.FromAddress.Hex()
+	timer := NewTimer(signerAddress, "block_payload")
+	MetricSigningRequestsInFlight.WithLabelValues(signerAddress).Inc()
+	defer MetricSigningRequestsInFlight.WithLabelValues(signerAddress).Dec()
 
 	labels := prometheus.Labels{"client": clientInfo.ClientName, "status": "error", "error": ""}
 	defer func() {
@@ -229,6 +292,10 @@ func (s *OpsignerService) signBlockPayload(
 	if err != nil {
 		s.logger.Warn("invalid signing arguments", "err", err)
 		labels["error"] = "invalid_blockPayload"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "invalid_blockPayload").Inc()
+		MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidBlockPayloadError{message: err.Error()}
 	}
 
@@ -236,6 +303,10 @@ func (s *OpsignerService) signBlockPayload(
 		s.logger.Warn("user is trying to sign with different sender account than actual signer-provider",
 			"provider", authConfig.FromAddress, "request", fromAddress)
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unexpected_from_address").Inc()
+		MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &UnauthorizedBlockPayloadError{"unexpected from address"}
 	}
 
@@ -243,6 +314,10 @@ func (s *OpsignerService) signBlockPayload(
 		s.logger.Warn("user is trying to sign a block payload for a different chainID than the actual signer's chainID",
 			"provider", authConfig.ChainID, "request", msg.ChainID)
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unexpected_chainId").Inc()
+		MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &UnauthorizedBlockPayloadError{"unexpected chainId"}
 	}
 
@@ -251,15 +326,26 @@ func (s *OpsignerService) signBlockPayload(
 	signature, err := s.provider.SignDigest(ctx, authConfig.KeyName, signingHash[:])
 	if err != nil {
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "sign_error").Inc()
+		MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidBlockPayloadError{err.Error()}
 	}
 	if len(signature) != 65 {
 		labels["error"] = "sign_error"
+		MetricSigningRequestsTotal.WithLabelValues(signerAddress, "error").Inc()
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "invalid_signature_length").Inc()
+		MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "error").Inc()
+		timer.RecordDuration("error")
 		return nil, &InvalidBlockPayloadError{"signature has invalid length"}
 	}
 	result := eth.Bytes65(signature)
 
 	labels["status"] = "success"
+	MetricSigningRequestsTotal.WithLabelValues(signerAddress, "success").Inc()
+	MetricRPCTotal.WithLabelValues("opsigner_signBlockPayload", "success").Inc()
+	timer.RecordDuration("success")
 
 	s.logger.Info(
 		"Signed block payload",

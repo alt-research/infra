@@ -331,3 +331,10 @@ func (s *ProviderConfig) GetAuthConfigForClient(clientName string, fromAddress *
 		KeyName:    clientName,
 	}, nil
 }
+
+// GetClientCount returns the number of configured clients/keys
+func (s *ProviderConfig) GetClientCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.auth)
+}
