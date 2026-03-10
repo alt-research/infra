@@ -40,6 +40,10 @@ type ConsensusPoller struct {
 	maxBlockLag        uint64
 	maxBlockRange      uint64
 	interval           time.Duration
+
+	// relaxedMode skips block hash consensus checks and block tag rewriting.
+	// Used by the load_balancer routing strategy which only needs health/lag checking.
+	relaxedMode bool
 }
 
 type backendState struct {
@@ -266,6 +270,12 @@ func WithPollerInterval(interval time.Duration) ConsensusOpt {
 	}
 }
 
+func WithRelaxedMode(relaxed bool) ConsensusOpt {
+	return func(cp *ConsensusPoller) {
+		cp.relaxedMode = relaxed
+	}
+}
+
 func NewConsensusPoller(bg *BackendGroup, opts ...ConsensusOpt) *ConsensusPoller {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
@@ -449,6 +459,11 @@ func (cp *ConsensusPoller) checkExpectedBlockTags(
 
 // UpdateBackendGroupConsensus resolves the current group consensus based on the state of the backends
 func (cp *ConsensusPoller) UpdateBackendGroupConsensus(ctx context.Context) {
+	if cp.relaxedMode {
+		cp.updateBackendGroupRelaxed(ctx)
+		return
+	}
+
 	// get the latest block number from the tracker
 	currentConsensusBlockNumber := cp.GetLatestBlockNumber()
 
@@ -571,6 +586,42 @@ func (cp *ConsensusPoller) UpdateBackendGroupConsensus(ctx context.Context) {
 		"proposedBlock", proposedBlock,
 		"consensusBackends", strings.Join(consensusBackendsNames, ", "),
 		"filteredBackends", strings.Join(filteredBackendsNames, ", "))
+}
+
+// updateBackendGroupRelaxed is a simplified consensus update for load_balancer mode.
+// It only checks health, peer count, sync status, and block lag — no block hash consensus.
+func (cp *ConsensusPoller) updateBackendGroupRelaxed(ctx context.Context) {
+	candidates := cp.getConsensusCandidates()
+
+	group := make([]*Backend, 0, len(candidates))
+	consensusBackendsNames := make([]string, 0, len(candidates))
+	filteredBackendsNames := make([]string, 0, len(cp.backendGroup.Backends))
+	for _, be := range cp.backendGroup.Backends {
+		_, exist := candidates[be]
+		if exist {
+			group = append(group, be)
+			consensusBackendsNames = append(consensusBackendsNames, be.Name)
+		} else {
+			filteredBackendsNames = append(filteredBackendsNames, be.Name)
+		}
+	}
+
+	cp.consensusGroupMux.Lock()
+	cp.consensusGroup = group
+	cp.consensusGroupMux.Unlock()
+
+	// Update consistent hash ring if sticky session is enabled
+	if cp.backendGroup.consistentHash != nil {
+		cp.backendGroup.consistentHash.Update(group)
+	}
+
+	RecordGroupConsensusCount(cp.backendGroup, len(group))
+	RecordGroupConsensusFilteredCount(cp.backendGroup, len(filteredBackendsNames))
+	RecordGroupTotalCount(cp.backendGroup, len(cp.backendGroup.Backends))
+
+	log.Debug("load balancer group state",
+		"healthy_backends", strings.Join(consensusBackendsNames, ", "),
+		"filtered_backends", strings.Join(filteredBackendsNames, ", "))
 }
 
 // IsBanned checks if a specific backend is banned

@@ -376,6 +376,8 @@ func Start(config *Config) (*Server, func(), error) {
 			routingStrategy:        bg.RoutingStrategy,
 			multicallRPCErrorCheck: bg.MulticallRPCErrorCheck,
 			maxBlockRange:          maxBlockRange,
+			stickySessionEnabled:   bg.StickySessionEnabled,
+			stickyHashKey:          bg.StickySessionHashKey,
 		}
 	}
 
@@ -566,7 +568,7 @@ func Start(config *Config) (*Server, func(), error) {
 		bgcfg := config.BackendGroups[bgName]
 
 		if !bgcfg.ValidateRoutingStrategy(bgName) {
-			log.Crit("Invalid routing strategy provided. Valid options: fallback, multicall, consensus_aware, \"\"", "name", bgName)
+			log.Crit("Invalid routing strategy provided. Valid options: fallback, multicall, consensus_aware, load_balancer, \"\"", "name", bgName)
 		}
 
 		log.Info("configuring routing strategy for backend_group", "name", bgName, "routing_strategy", bgcfg.RoutingStrategy)
@@ -636,6 +638,48 @@ func Start(config *Config) (*Server, func(), error) {
 
 			if bgcfg.ConsensusHA {
 				tracker.(*RedisConsensusTracker).Init()
+			}
+		}
+
+		if bgcfg.RoutingStrategy == LoadBalancerRoutingStrategy {
+			log.Info("creating poller for load_balancer backend_group", "name", bgName)
+
+			copts := make([]ConsensusOpt, 0)
+			copts = append(copts, WithRelaxedMode(true))
+
+			if bgcfg.ConsensusAsyncHandler == "noop" {
+				copts = append(copts, WithAsyncHandler(NewNoopAsyncHandler()))
+			}
+			if bgcfg.ConsensusBanPeriod > 0 {
+				copts = append(copts, WithBanPeriod(time.Duration(bgcfg.ConsensusBanPeriod)))
+			}
+			if bgcfg.ConsensusMaxUpdateThreshold > 0 {
+				copts = append(copts, WithMaxUpdateThreshold(time.Duration(bgcfg.ConsensusMaxUpdateThreshold)))
+			}
+			if bgcfg.ConsensusMaxBlockLag > 0 {
+				copts = append(copts, WithMaxBlockLag(bgcfg.ConsensusMaxBlockLag))
+			}
+			if bgcfg.ConsensusMinPeerCount > 0 {
+				copts = append(copts, WithMinPeerCount(uint64(bgcfg.ConsensusMinPeerCount)))
+			}
+			if bgcfg.ConsensusPollerInterval > 0 {
+				copts = append(copts, WithPollerInterval(time.Duration(bgcfg.ConsensusPollerInterval)))
+			}
+
+			cp := NewConsensusPoller(bg, copts...)
+			bg.Consensus = cp
+
+			if bgcfg.StickySessionEnabled {
+				virtualNodes := bgcfg.StickyVirtualNodes
+				if virtualNodes <= 0 {
+					virtualNodes = defaultVirtualNodes
+				}
+				bg.consistentHash = NewConsistentHash(virtualNodes)
+				log.Info("sticky session enabled for load_balancer backend_group",
+					"name", bgName,
+					"hash_key", bgcfg.StickySessionHashKey,
+					"virtual_nodes", virtualNodes,
+				)
 			}
 		}
 	}

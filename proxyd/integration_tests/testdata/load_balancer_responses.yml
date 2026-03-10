@@ -1,0 +1,79 @@
+- method: eth_chainId
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x1"
+    }
+- method: net_peerCount
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x10"
+    }
+- method: eth_syncing
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": false
+    }
+- method: eth_getBlockByNumber
+  block: latest
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0x101",
+        "number": "0x101"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: 0x101
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0x101",
+        "number": "0x101"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: safe
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xe1",
+        "number": "0xe1"
+      }
+    }
+- method: eth_getBlockByNumber
+  block: finalized
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": {
+        "hash": "hash_0xc1",
+        "number": "0xc1"
+      }
+    }
+- method: eth_blockNumber
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x101"
+    }
+- method: eth_call
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x1234"
+    }

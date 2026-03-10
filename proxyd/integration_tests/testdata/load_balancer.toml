@@ -1,0 +1,34 @@
+[server]
+rpc_port = 8545
+
+[backend]
+response_timeout_seconds = 1
+max_degraded_latency_threshold = "30ms"
+
+[backends]
+[backends.node1]
+rpc_url = "$NODE1_URL"
+
+[backends.node2]
+rpc_url = "$NODE2_URL"
+
+[backends.node3]
+rpc_url = "$NODE3_URL"
+
+[backend_groups]
+[backend_groups.node]
+backends = ["node1", "node2", "node3"]
+routing_strategy = "load_balancer"
+consensus_handler = "noop" # allow more control over the poller for tests
+consensus_ban_period = "1m"
+consensus_max_update_threshold = "2m"
+consensus_max_block_lag = 8
+consensus_min_peer_count = 4
+sticky_session_enabled = true
+sticky_session_hash_key = "xff"
+
+[rpc_method_mappings]
+eth_call = "node"
+eth_chainId = "node"
+eth_blockNumber = "node"
+eth_getBlockByNumber = "node"

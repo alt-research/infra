@@ -116,6 +116,24 @@ backends = ["infura"]
 [backend_groups.alchemy]
 backends = ["alchemy"]
 
+# Load balancer mode: routes requests to healthy backends without block tag rewriting.
+# Uses a lightweight health poller (block lag + peer count) to filter unhealthy backends.
+# Supports sticky session via consistent hashing for IP-based affinity.
+[backend_groups.load_balanced]
+backends = ["infura", "alchemy"]
+routing_strategy = "load_balancer"
+# Enable sticky session (consistent hashing based on client IP)
+sticky_session_enabled = true
+# Hash key source: "xff" uses X-Forwarded-For header (fallback to RemoteAddr)
+sticky_session_hash_key = "xff"
+# Number of virtual nodes per backend on the hash ring, default 150
+# sticky_virtual_nodes = 150
+# Health check settings (same as consensus_aware)
+# consensus_max_block_lag = 8
+# consensus_min_peer_count = 3
+# consensus_poller_interval = "1s"
+# consensus_ban_period = "5m"
+
 # If the authentication group below is in the config,
 # proxyd will only accept authenticated requests.
 [authentication]

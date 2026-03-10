@@ -505,6 +505,31 @@ var (
 	}, []string{
 		"backend_name",
 	})
+
+	loadBalancerStickySessionBackendSelected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: MetricsNamespace,
+		Name:      "lb_sticky_session_backend_selected",
+		Help:      "Count of times a backend was selected via sticky session routing",
+	}, []string{
+		"backend_group",
+		"backend_name",
+	})
+
+	loadBalancerHealthyBackends = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: MetricsNamespace,
+		Name:      "lb_healthy_backends",
+		Help:      "Number of healthy backends in the load balancer group",
+	}, []string{
+		"backend_group",
+	})
+
+	loadBalancerDegradedBackends = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: MetricsNamespace,
+		Name:      "lb_degraded_backends",
+		Help:      "Number of degraded backends in the load balancer group",
+	}, []string{
+		"backend_group",
+	})
 )
 
 func RecordRedisError(source string) {
@@ -696,6 +721,15 @@ func RecordBackendProbeCheck(backendName string, success bool) {
 
 func RecordBackendProbeDuration(backendName string, duration time.Duration) {
 	backendProbeDurationHist.WithLabelValues(backendName).Observe(duration.Seconds())
+}
+
+func RecordLoadBalancerStickyBackendSelected(bg *BackendGroup, backendName string) {
+	loadBalancerStickySessionBackendSelected.WithLabelValues(bg.Name, backendName).Inc()
+}
+
+func RecordLoadBalancerBackendCounts(bg *BackendGroup, healthy, degraded int) {
+	loadBalancerHealthyBackends.WithLabelValues(bg.Name).Set(float64(healthy))
+	loadBalancerDegradedBackends.WithLabelValues(bg.Name).Set(float64(degraded))
 }
 
 func boolToFloat64(b bool) float64 {

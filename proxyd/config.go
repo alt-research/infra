@@ -164,6 +164,8 @@ func (b *BackendGroupConfig) ValidateRoutingStrategy(bgName string) bool {
 		return true
 	case FallbackRoutingStrategy:
 		return true
+	case LoadBalancerRoutingStrategy:
+		return true
 	case "":
 		log.Info("Empty routing strategy provided for backend_group, using fallback strategy ", "name", bgName)
 		b.RoutingStrategy = FallbackRoutingStrategy
@@ -177,6 +179,7 @@ const (
 	ConsensusAwareRoutingStrategy RoutingStrategy = "consensus_aware"
 	MulticallRoutingStrategy      RoutingStrategy = "multicall"
 	FallbackRoutingStrategy       RoutingStrategy = "fallback"
+	LoadBalancerRoutingStrategy   RoutingStrategy = "load_balancer"
 )
 
 type BackendGroupConfig struct {
@@ -210,6 +213,11 @@ type BackendGroupConfig struct {
 	ConsensusHARedis             RedisConfig  `toml:"consensus_ha_redis"`
 
 	Fallbacks []string `toml:"fallbacks"`
+
+	// Load balancer sticky session configuration
+	StickySessionEnabled bool   `toml:"sticky_session_enabled"`
+	StickySessionHashKey string `toml:"sticky_session_hash_key"`
+	StickyVirtualNodes   int    `toml:"sticky_virtual_nodes"`
 }
 
 type BackendGroupsConfig map[string]*BackendGroupConfig

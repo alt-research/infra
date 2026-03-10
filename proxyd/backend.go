@@ -994,6 +994,10 @@ type BackendGroup struct {
 	routingStrategy        RoutingStrategy
 	multicallRPCErrorCheck bool
 	maxBlockRange          uint64
+
+	stickySessionEnabled bool
+	stickyHashKey        string
+	consistentHash       *ConsistentHash
 }
 
 func (bg *BackendGroup) GetRoutingStrategy() RoutingStrategy {
@@ -1027,7 +1031,7 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 		return nil, "", nil
 	}
 
-	backends := bg.orderedBackendsForRequest()
+	backends := bg.orderedBackendsForRequest(ctx)
 
 	overriddenResponses := make([]*indexedReqRes, 0)
 	rewrittenReqs := make([]*RPCReq, 0, len(rpcReqs))
@@ -1035,7 +1039,8 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	// When routing_strategy is set to `consensus_aware` the backend group acts as a load balancer
 	// serving traffic from any backend that agrees in the consensus group
 	// We also rewrite block tags to enforce compliance with consensus
-	if bg.Consensus != nil {
+	// Note: load_balancer strategy uses ConsensusPoller for health checks but skips rewriting
+	if bg.Consensus != nil && bg.routingStrategy != LoadBalancerRoutingStrategy {
 		rpcReqs, overriddenResponses = bg.OverwriteConsensusResponses(rpcReqs, overriddenResponses, rewrittenReqs)
 	} else if bg.maxBlockRange > 0 {
 		rpcReqs, overriddenResponses = bg.OverwriteNonConsensusRequests(rpcReqs, overriddenResponses)
@@ -1260,25 +1265,28 @@ func weightedShuffle(backends []*Backend) {
 	weightedshuffle.ShuffleInplace(backends, weight, nil)
 }
 
-func (bg *BackendGroup) orderedBackendsForRequest() []*Backend {
+func (bg *BackendGroup) orderedBackendsForRequest(ctx context.Context) []*Backend {
 	if bg.Consensus != nil {
+		if bg.routingStrategy == LoadBalancerRoutingStrategy {
+			return bg.loadBalancedGroup(ctx)
+		}
 		return bg.loadBalancedConsensusGroup()
-	} else {
-		healthy := make([]*Backend, 0, len(bg.Backends))
-		unhealthy := make([]*Backend, 0, len(bg.Backends))
-		for _, be := range bg.Backends {
-			if be.IsHealthy() {
-				healthy = append(healthy, be)
-			} else {
-				unhealthy = append(unhealthy, be)
-			}
-		}
-		if bg.WeightedRouting {
-			weightedShuffle(healthy)
-			weightedShuffle(unhealthy)
-		}
-		return append(healthy, unhealthy...)
 	}
+
+	healthy := make([]*Backend, 0, len(bg.Backends))
+	unhealthy := make([]*Backend, 0, len(bg.Backends))
+	for _, be := range bg.Backends {
+		if be.IsHealthy() {
+			healthy = append(healthy, be)
+		} else {
+			unhealthy = append(unhealthy, be)
+		}
+	}
+	if bg.WeightedRouting {
+		weightedShuffle(healthy)
+		weightedShuffle(unhealthy)
+	}
+	return append(healthy, unhealthy...)
 }
 
 func (bg *BackendGroup) loadBalancedConsensusGroup() []*Backend {
@@ -1317,6 +1325,56 @@ func (bg *BackendGroup) loadBalancedConsensusGroup() []*Backend {
 	backendsHealthy = append(backendsHealthy, backendsDegraded...)
 
 	return backendsHealthy
+}
+
+// loadBalancedGroup returns backends ordered for the load_balancer routing strategy.
+// It uses the ConsensusPoller's health-filtered group and applies consistent hashing
+// for sticky session support when enabled.
+func (bg *BackendGroup) loadBalancedGroup(ctx context.Context) []*Backend {
+	cg := bg.Consensus.GetConsensusGroup()
+
+	backendsHealthy := make([]*Backend, 0, len(cg))
+	backendsDegraded := make([]*Backend, 0, len(cg))
+	for _, be := range cg {
+		if !be.IsHealthy() {
+			continue
+		}
+		if be.IsDegraded() {
+			backendsDegraded = append(backendsDegraded, be)
+			continue
+		}
+		backendsHealthy = append(backendsHealthy, be)
+	}
+
+	RecordLoadBalancerBackendCounts(bg, len(backendsHealthy), len(backendsDegraded))
+
+	if bg.stickySessionEnabled && bg.consistentHash != nil {
+		xff := GetXForwardedFor(ctx)
+		if xff != "" {
+			backendsHealthy = bg.consistentHash.GetOrderedBackends(xff, backendsHealthy)
+			if len(backendsHealthy) > 0 {
+				RecordLoadBalancerStickyBackendSelected(bg, backendsHealthy[0].Name)
+			}
+		} else {
+			// No client identifier, fall back to random shuffle
+			r := rand.New(rand.NewSource(time.Now().UnixNano()))
+			r.Shuffle(len(backendsHealthy), func(i, j int) {
+				backendsHealthy[i], backendsHealthy[j] = backendsHealthy[j], backendsHealthy[i]
+			})
+		}
+	} else {
+		// No sticky session, random shuffle
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		r.Shuffle(len(backendsHealthy), func(i, j int) {
+			backendsHealthy[i], backendsHealthy[j] = backendsHealthy[j], backendsHealthy[i]
+		})
+	}
+
+	if bg.WeightedRouting {
+		weightedShuffle(backendsHealthy)
+	}
+
+	return append(backendsHealthy, backendsDegraded...)
 }
 
 func (bg *BackendGroup) Shutdown() {
