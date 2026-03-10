@@ -15,13 +15,13 @@ var (
 		},
 	)
 
-	// MetricSigningRequestsTotal counts signing requests by address and outcome
+	// MetricSigningRequestsTotal counts signing requests by address, client CN and outcome
 	MetricSigningRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "signing_requests_total",
-			Help: "Total number of transaction signing requests, by address and outcome",
+			Help: "Total number of transaction signing requests, by address, client CN and outcome",
 		},
-		[]string{"address", "status"},
+		[]string{"address", "client_cn", "status"},
 	)
 
 	// MetricSigningRequestDuration tracks the duration of signing requests
