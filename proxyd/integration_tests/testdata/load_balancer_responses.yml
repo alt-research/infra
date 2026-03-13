@@ -77,6 +77,20 @@
       "id": 67,
       "result": "0x1234"
     }
+- method: eth_getTransactionCount
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0x12"
+    }
+- method: eth_getBalance
+  response: >
+    {
+      "jsonrpc": "2.0",
+      "id": 67,
+      "result": "0xde0b6b3a7640000"
+    }
 - method: eth_getLogs
   response: >
     {

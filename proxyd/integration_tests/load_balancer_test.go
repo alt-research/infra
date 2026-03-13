@@ -261,6 +261,84 @@ func TestLoadBalancer_Failover(t *testing.T) {
 	require.Equal(t, 200, code)
 }
 
+// TestLoadBalancer_BlockTagMethodsWithMaxBlockRange verifies that methods using block tags
+// (latest, safe, finalized) work correctly when consensus_max_block_range is configured.
+// This is a regression test: previously, load_balancer with maxBlockRange would fall through
+// to OverwriteNonConsensusRequests which rejects block tags in non-consensus mode,
+// causing methods like eth_getTransactionCount to return null/0 instead of the real value.
+func TestLoadBalancer_BlockTagMethodsWithMaxBlockRange(t *testing.T) {
+	nodes, bg, _, shutdown := setupLoadBalancer(t)
+	defer nodes["node1"].mockBackend.Close()
+	defer nodes["node2"].mockBackend.Close()
+	defer nodes["node3"].mockBackend.Close()
+	defer shutdown()
+
+	ctx := context.Background()
+
+	update := func() {
+		for _, be := range bg.Backends {
+			bg.Consensus.UpdateBackend(ctx, be)
+		}
+		bg.Consensus.UpdateBackendGroupConsensus(ctx)
+	}
+	update()
+
+	h := make(http.Header)
+	h.Set("X-Forwarded-For", "192.168.1.1")
+	client := NewProxydClientWithHeaders("http://127.0.0.1:8545", h)
+
+	// eth_getTransactionCount with "latest" — this is what cast nonce calls
+	resBody, code, err := client.SendRPC("eth_getTransactionCount", []interface{}{
+		"0x6e71785D7fA5c6eF2801184e0bfb411244D2Ca2e", "latest",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, code)
+
+	var res proxyd.RPCRes
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.Nil(t, res.Error, "eth_getTransactionCount with 'latest' should not error")
+	require.NotNil(t, res.Result, "eth_getTransactionCount should return a result, not null")
+
+	// eth_getBalance with "latest"
+	resBody, code, err = client.SendRPC("eth_getBalance", []interface{}{
+		"0x6e71785D7fA5c6eF2801184e0bfb411244D2Ca2e", "latest",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, code)
+
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.Nil(t, res.Error, "eth_getBalance with 'latest' should not error")
+	require.NotNil(t, res.Result, "eth_getBalance should return a result, not null")
+
+	// eth_call with "latest"
+	resBody, code, err = client.SendRPC("eth_call", []interface{}{
+		map[string]interface{}{"to": "0x1234567890abcdef1234567890abcdef12345678", "data": "0x"},
+		"latest",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, code)
+
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.Nil(t, res.Error, "eth_call with 'latest' should not error")
+	require.NotNil(t, res.Result, "eth_call should return a result, not null")
+
+	// eth_getBlockByNumber with "safe"
+	resBody, code, err = client.SendRPC("eth_getBlockByNumber", []interface{}{"safe", false})
+	require.NoError(t, err)
+	require.Equal(t, 200, code)
+
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.Nil(t, res.Error, "eth_getBlockByNumber with 'safe' should not error")
+
+	// eth_getBlockByNumber with "finalized"
+	resBody, code, err = client.SendRPC("eth_getBlockByNumber", []interface{}{"finalized", false})
+	require.NoError(t, err)
+	require.Equal(t, 200, code)
+
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.Nil(t, res.Error, "eth_getBlockByNumber with 'finalized' should not error")
+}
+
 func TestLoadBalancer_MaxBlockRange(t *testing.T) {
 	nodes, bg, _, shutdown := setupLoadBalancer(t)
 	defer nodes["node1"].mockBackend.Close()
