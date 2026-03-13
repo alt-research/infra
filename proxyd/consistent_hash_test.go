@@ -16,6 +16,16 @@ func makeTestBackends(names ...string) []*Backend {
 	return backends
 }
 
+func makeWeightedTestBackends(namesAndWeights ...interface{}) []*Backend {
+	backends := make([]*Backend, 0)
+	for i := 0; i < len(namesAndWeights); i += 2 {
+		name := namesAndWeights[i].(string)
+		weight := namesAndWeights[i+1].(int)
+		backends = append(backends, &Backend{Name: name, weight: weight})
+	}
+	return backends
+}
+
 func TestConsistentHash_SameKeyReturnsSameOrder(t *testing.T) {
 	ch := NewConsistentHash(150)
 	backends := makeTestBackends("node-1", "node-2", "node-3")
@@ -202,4 +212,59 @@ func TestConsistentHash_DefaultVirtualNodes(t *testing.T) {
 
 	ch2 := NewConsistentHash(-1)
 	assert.Equal(t, defaultVirtualNodes, ch2.virtualNodes)
+}
+
+func TestConsistentHash_WeightProportionalDistribution(t *testing.T) {
+	ch := NewConsistentHash(150)
+	// node-1 has weight 3, node-2 has weight 1 → expect ~75%/25% split
+	backends := makeWeightedTestBackends("node-1", 3, "node-2", 1)
+	ch.Update(backends)
+
+	counts := make(map[string]int)
+	numKeys := 10000
+	for i := 0; i < numKeys; i++ {
+		key := fmt.Sprintf("192.168.%d.%d", i/256, i%256)
+		result := ch.GetOrderedBackends(key, backends)
+		counts[result[0].Name]++
+	}
+
+	// node-1 (weight 3) should get roughly 75% of traffic
+	// Allow range 60%-90%
+	n1Pct := float64(counts["node-1"]) / float64(numKeys) * 100
+	assert.Greater(t, n1Pct, 60.0, "weight-3 backend should get >60%% of traffic, got %.1f%%", n1Pct)
+	assert.Less(t, n1Pct, 90.0, "weight-3 backend should get <90%% of traffic, got %.1f%%", n1Pct)
+}
+
+func TestConsistentHash_WeightZeroDefaultsToOne(t *testing.T) {
+	ch := NewConsistentHash(150)
+	// weight=0 should behave like weight=1
+	backends := makeWeightedTestBackends("node-1", 0, "node-2", 0)
+	ch.Update(backends)
+
+	counts := make(map[string]int)
+	numKeys := 10000
+	for i := 0; i < numKeys; i++ {
+		key := fmt.Sprintf("10.0.%d.%d", i/256, i%256)
+		result := ch.GetOrderedBackends(key, backends)
+		counts[result[0].Name]++
+	}
+
+	// Both should get roughly 50% each (allow 30%-70%)
+	n1Pct := float64(counts["node-1"]) / float64(numKeys) * 100
+	assert.Greater(t, n1Pct, 30.0, "each backend should get >30%%")
+	assert.Less(t, n1Pct, 70.0, "each backend should get <70%%")
+}
+
+func TestConsistentHash_WeightChangeTriggersRebuild(t *testing.T) {
+	ch := NewConsistentHash(150)
+	backends := makeWeightedTestBackends("node-1", 1, "node-2", 1)
+	ch.Update(backends)
+	ringLen1 := len(ch.ring)
+
+	// Change weight of node-1 — should trigger rebuild with more virtual nodes
+	backends2 := makeWeightedTestBackends("node-1", 3, "node-2", 1)
+	ch.Update(backends2)
+	ringLen2 := len(ch.ring)
+
+	assert.Greater(t, ringLen2, ringLen1, "ring should grow when weight increases")
 }

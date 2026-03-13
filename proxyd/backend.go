@@ -23,6 +23,7 @@ import (
 	supervisorBackend "github.com/ethereum-optimism/optimism/op-supervisor/supervisor/backend"
 	supervisorTypes "github.com/ethereum-optimism/optimism/op-supervisor/supervisor/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gorilla/websocket"
@@ -1039,9 +1040,11 @@ func (bg *BackendGroup) Forward(ctx context.Context, rpcReqs []*RPCReq, isBatch 
 	// When routing_strategy is set to `consensus_aware` the backend group acts as a load balancer
 	// serving traffic from any backend that agrees in the consensus group
 	// We also rewrite block tags to enforce compliance with consensus
-	// Note: load_balancer strategy uses ConsensusPoller for health checks but skips rewriting
-	if bg.Consensus != nil && bg.routingStrategy != LoadBalancerRoutingStrategy {
+	if bg.Consensus != nil && bg.routingStrategy == ConsensusAwareRoutingStrategy {
 		rpcReqs, overriddenResponses = bg.OverwriteConsensusResponses(rpcReqs, overriddenResponses, rewrittenReqs)
+	} else if bg.routingStrategy == LoadBalancerRoutingStrategy && bg.maxBlockRange > 0 {
+		// load_balancer skips block tag rewriting but still enforces maxBlockRange on range queries
+		rpcReqs, overriddenResponses = bg.OverwriteBlockRangeRequests(rpcReqs, overriddenResponses)
 	} else if bg.maxBlockRange > 0 {
 		rpcReqs, overriddenResponses = bg.OverwriteNonConsensusRequests(rpcReqs, overriddenResponses)
 	}
@@ -1370,9 +1373,8 @@ func (bg *BackendGroup) loadBalancedGroup(ctx context.Context) []*Backend {
 		})
 	}
 
-	if bg.WeightedRouting {
-		weightedShuffle(backendsHealthy)
-	}
+	// Note: WeightedRouting is handled by weight-proportional virtual nodes
+	// in the consistent hash ring, so no weightedShuffle is needed here.
 
 	return append(backendsHealthy, backendsDegraded...)
 }
@@ -1936,5 +1938,70 @@ func (bg *BackendGroup) OverwriteNonConsensusRequests(rpcReqs []*RPCReq, overrid
 			rewrittenReqs = append(rewrittenReqs, req)
 		}
 	}
+	return rewrittenReqs, overriddenResponses
+}
+
+// OverwriteBlockRangeRequests enforces maxBlockRange on range-based queries (eth_getLogs, eth_newFilter)
+// without rewriting block tags or other method params. Used by the load_balancer routing strategy.
+func (bg *BackendGroup) OverwriteBlockRangeRequests(rpcReqs []*RPCReq, overriddenResponses []*indexedReqRes) ([]*RPCReq, []*indexedReqRes) {
+	rewrittenReqs := make([]*RPCReq, 0, len(rpcReqs))
+
+	for i, req := range rpcReqs {
+		if req.Method != "eth_getLogs" && req.Method != "eth_newFilter" {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+
+		var p []map[string]interface{}
+		if err := json.Unmarshal(req.Params, &p); err != nil || len(p) == 0 {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+
+		fromVal, hasFrom := p[0]["fromBlock"]
+		toVal, hasTo := p[0]["toBlock"]
+		if !hasFrom || !hasTo {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+
+		fromStr, ok := fromVal.(string)
+		if !ok {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+		toStr, ok := toVal.(string)
+		if !ok {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+
+		from, err := hexutil.DecodeUint64(fromStr)
+		if err != nil {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+		to, err := hexutil.DecodeUint64(toStr)
+		if err != nil {
+			rewrittenReqs = append(rewrittenReqs, req)
+			continue
+		}
+
+		if to-from > bg.maxBlockRange {
+			res := RPCRes{JSONRPC: JSONRPCVersion, ID: req.ID}
+			res.Error = ErrInvalidParams(
+				fmt.Sprintf("block range greater than %d max", bg.maxBlockRange),
+			)
+			overriddenResponses = append(overriddenResponses, &indexedReqRes{
+				index: i,
+				req:   req,
+				res:   &res,
+			})
+			continue
+		}
+
+		rewrittenReqs = append(rewrittenReqs, req)
+	}
+
 	return rewrittenReqs, overriddenResponses
 }

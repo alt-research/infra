@@ -17,7 +17,7 @@ type ConsistentHash struct {
 	virtualNodes int
 	ring         []uint32
 	hashMap      map[uint32]*Backend
-	backends     map[string]bool // track current backend names for change detection
+	backends     map[string]int // track current backend names and weights for change detection
 }
 
 func NewConsistentHash(virtualNodes int) *ConsistentHash {
@@ -28,7 +28,7 @@ func NewConsistentHash(virtualNodes int) *ConsistentHash {
 		virtualNodes: virtualNodes,
 		ring:         make([]uint32, 0),
 		hashMap:      make(map[uint32]*Backend),
-		backends:     make(map[string]bool),
+		backends:     make(map[string]int),
 	}
 }
 
@@ -38,7 +38,9 @@ func (ch *ConsistentHash) hashKey(key string) uint32 {
 }
 
 // Update rebuilds the hash ring with the given backends.
-// It skips rebuilding if the backend set hasn't changed.
+// It skips rebuilding if the backend set (names and weights) hasn't changed.
+// Each backend gets virtualNodes * max(weight, 1) virtual nodes on the ring,
+// so higher-weight backends attract proportionally more traffic.
 func (ch *ConsistentHash) Update(backends []*Backend) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
@@ -47,13 +49,19 @@ func (ch *ConsistentHash) Update(backends []*Backend) {
 		return
 	}
 
-	ch.ring = make([]uint32, 0, len(backends)*ch.virtualNodes)
-	ch.hashMap = make(map[uint32]*Backend, len(backends)*ch.virtualNodes)
-	ch.backends = make(map[string]bool, len(backends))
+	totalVNodes := 0
+	for _, be := range backends {
+		totalVNodes += ch.virtualNodes * effectiveWeight(be)
+	}
+
+	ch.ring = make([]uint32, 0, totalVNodes)
+	ch.hashMap = make(map[uint32]*Backend, totalVNodes)
+	ch.backends = make(map[string]int, len(backends))
 
 	for _, be := range backends {
-		ch.backends[be.Name] = true
-		for i := 0; i < ch.virtualNodes; i++ {
+		w := effectiveWeight(be)
+		ch.backends[be.Name] = be.weight
+		for i := 0; i < ch.virtualNodes*w; i++ {
 			vkey := fmt.Sprintf("%s#%d", be.Name, i)
 			hash := ch.hashKey(vkey)
 			ch.ring = append(ch.ring, hash)
@@ -66,12 +74,24 @@ func (ch *ConsistentHash) Update(backends []*Backend) {
 	})
 }
 
+// effectiveWeight returns the backend's weight, defaulting to 1 if unset or zero.
+func effectiveWeight(be *Backend) int {
+	if be.weight <= 0 {
+		return 1
+	}
+	return be.weight
+}
+
 func (ch *ConsistentHash) hasChanged(backends []*Backend) bool {
 	if len(backends) != len(ch.backends) {
 		return true
 	}
 	for _, be := range backends {
-		if !ch.backends[be.Name] {
+		prevWeight, exists := ch.backends[be.Name]
+		if !exists {
+			return true
+		}
+		if be.weight != prevWeight {
 			return true
 		}
 	}

@@ -2,6 +2,7 @@ package integration_tests
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path"
@@ -258,6 +259,57 @@ func TestLoadBalancer_Failover(t *testing.T) {
 	_, code, err = client.SendRPC("eth_chainId", nil)
 	require.NoError(t, err)
 	require.Equal(t, 200, code)
+}
+
+func TestLoadBalancer_MaxBlockRange(t *testing.T) {
+	nodes, bg, _, shutdown := setupLoadBalancer(t)
+	defer nodes["node1"].mockBackend.Close()
+	defer nodes["node2"].mockBackend.Close()
+	defer nodes["node3"].mockBackend.Close()
+	defer shutdown()
+
+	ctx := context.Background()
+
+	update := func() {
+		for _, be := range bg.Backends {
+			bg.Consensus.UpdateBackend(ctx, be)
+		}
+		bg.Consensus.UpdateBackendGroupConsensus(ctx)
+	}
+	update()
+
+	h := make(http.Header)
+	h.Set("X-Forwarded-For", "192.168.1.1")
+	client := NewProxydClientWithHeaders("http://127.0.0.1:8545", h)
+
+	// eth_getLogs with a range within the limit (100 blocks) should succeed
+	resBody, code, err := client.SendRPC("eth_getLogs", []interface{}{
+		map[string]interface{}{
+			"fromBlock": "0x1",
+			"toBlock":   "0x65", // range = 0x65 - 0x1 = 100, exactly at limit
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 200, code)
+
+	// Verify no error in response
+	var res proxyd.RPCRes
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.Nil(t, res.Error, "request within block range should succeed")
+
+	// eth_getLogs with a range exceeding the limit should return an error
+	resBody, code, err = client.SendRPC("eth_getLogs", []interface{}{
+		map[string]interface{}{
+			"fromBlock": "0x1",
+			"toBlock":   "0x66", // range = 0x66 - 0x1 = 101, exceeds limit of 100
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 400, code)
+
+	require.NoError(t, json.Unmarshal(resBody, &res))
+	require.NotNil(t, res.Error, "request exceeding block range should return error")
+	require.Contains(t, res.Error.Message, "block range greater than 100 max")
 }
 
 func max(a, b, c int) int {

@@ -26,9 +26,11 @@ consensus_max_block_lag = 8
 consensus_min_peer_count = 4
 sticky_session_enabled = true
 sticky_session_hash_key = "xff"
+consensus_max_block_range = 100
 
 [rpc_method_mappings]
 eth_call = "node"
 eth_chainId = "node"
 eth_blockNumber = "node"
 eth_getBlockByNumber = "node"
+eth_getLogs = "node"
