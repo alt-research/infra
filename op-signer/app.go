@@ -103,6 +103,11 @@ func (s *SignerApp) init(cfg *Config) error {
 	if err := s.initRPC(cfg, providerCfg); err != nil {
 		return fmt.Errorf("rpc error: %w", err)
 	}
+	if s.adminApp != nil {
+		if err := s.adminApp.Start(); err != nil {
+			return fmt.Errorf("admin start error: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -227,6 +232,19 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 	keyCount := providerCfg.GetClientCount()
 	service.MetricConfiguredKeys.Set(float64(keyCount))
 
+	// Initialize placeholder request metrics only for keys pinned to a specific client CN.
+	auths := providerCfg.Auth()
+	keyMetrics := make([]service.KeyMetricInfo, 0, len(auths))
+	for _, authConfig := range auths {
+		if authConfig.KeyName != "" && authConfig.AllowedClientCN != "" {
+			keyMetrics = append(keyMetrics, service.KeyMetricInfo{
+				Address:  authConfig.FromAddress.Hex(),
+				ClientCN: authConfig.AllowedClientCN,
+			})
+		}
+	}
+	service.InitAllKeyMetrics(keyMetrics)
+
 	if err := s.rpc.Start(); err != nil {
 		return fmt.Errorf("error starting RPC server: %w", err)
 	}
@@ -238,6 +256,8 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 func (s *SignerApp) initAdmin(cfg *Config, providerCfg *provider.ProviderConfig) error {
 	s.adminApp = admin.NewAdminApp(s.log, s.registry)
 	s.adminApp.SetVersion(s.version)
+	s.adminApp.SetMetricsInitFn(service.InitKeyMetrics)
+	s.adminApp.SetMetricsDeleteFn(service.DeleteKeyMetrics)
 
 	if err := s.adminApp.Init(&cfg.AdminConfig, providerCfg); err != nil {
 		return fmt.Errorf("failed to initialize admin app: %w", err)

@@ -28,8 +28,10 @@ type AdminApp struct {
 
 	version string
 
-	registry *prometheus.Registry
-	service  *AdminService
+	registry        *prometheus.Registry
+	service         *AdminService
+	metricsInitFn   MetricsInitFunc
+	metricsDeleteFn MetricsDeleteFunc
 
 	rpc *oprpc.Server
 }
@@ -48,6 +50,20 @@ func (s *AdminApp) SetVersion(version string) {
 
 func (s *AdminApp) Service() *AdminService {
 	return s.service
+}
+
+func (s *AdminApp) SetMetricsInitFn(fn MetricsInitFunc) {
+	s.metricsInitFn = fn
+	if s.service != nil {
+		s.service.SetMetricsInitFn(fn)
+	}
+}
+
+func (s *AdminApp) SetMetricsDeleteFn(fn MetricsDeleteFunc) {
+	s.metricsDeleteFn = fn
+	if s.service != nil {
+		s.service.SetMetricsDeleteFn(fn)
+	}
 }
 
 func (s *AdminApp) Init(cfg *Config, providerConfig *provider.ProviderConfig) error {
@@ -118,7 +134,16 @@ func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create signer service: %w", err)
 	}
+	s.service.SetMetricsInitFn(s.metricsInitFn)
+	s.service.SetMetricsDeleteFn(s.metricsDeleteFn)
 	s.service.RegisterAPIs(s.rpc)
+	return nil
+}
+
+func (s *AdminApp) Start() error {
+	if s.rpc == nil {
+		return errors.New("admin RPC server is not initialized")
+	}
 
 	if err := s.rpc.Start(); err != nil {
 		return fmt.Errorf("error starting RPC server: %w", err)

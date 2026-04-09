@@ -1,12 +1,47 @@
 package service
 
 import (
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// KeyMetricInfo contains the information needed to initialize/delete metrics for a key
+type KeyMetricInfo struct {
+	Address  string
+	ClientCN string
+}
+
+type signingRequestMetricLabelSet struct {
+	address  string
+	clientCN string
+}
+
+type signingRequestMetricsState struct {
+	mu       sync.Mutex
+	cond     *sync.Cond
+	inFlight map[signingRequestMetricLabelSet]int
+}
+
+type deletedSigningRequestMetric struct {
+	expiresAt time.Time
+}
+
+const deletedSigningRequestMetricTTL = time.Hour
+
+func newSigningRequestMetricsState() *signingRequestMetricsState {
+	state := &signingRequestMetricsState{
+		inFlight: make(map[signingRequestMetricLabelSet]int),
+	}
+	state.cond = sync.NewCond(&state.mu)
+	return state
+}
+
 var (
+	signingRequestMetricsTracker = newSigningRequestMetricsState()
+	deletedSigningRequestMetrics sync.Map
+
 	// MetricSignerUp is a gauge that indicates if the signer service is up (always 1)
 	MetricSignerUp = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -92,6 +127,120 @@ var (
 		[]string{"client", "status", "error"},
 	)
 )
+
+// InitKeyMetrics initializes placeholder request counters for a CN-restricted key.
+func InitKeyMetrics(address, clientCN string) {
+	if address == "" || clientCN == "" {
+		return
+	}
+
+	deletedSigningRequestMetrics.Delete(signingRequestMetricLabelSet{address: address, clientCN: clientCN})
+	pruneExpiredDeletedSigningRequestMetrics()
+	MetricSigningRequestsTotal.WithLabelValues(address, clientCN, "success")
+	MetricSigningRequestsTotal.WithLabelValues(address, clientCN, "error")
+}
+
+// InitAllKeyMetrics initializes placeholder metrics for all configured keys
+func InitAllKeyMetrics(keys []KeyMetricInfo) {
+	for _, key := range keys {
+		InitKeyMetrics(key.Address, key.ClientCN)
+	}
+}
+
+// DeleteKeyMetrics removes request counters for a specific address/clientCN combination.
+// This should be called when a key is removed or when its clientCN is changed.
+func DeleteKeyMetrics(address, clientCN string) {
+	if address == "" || clientCN == "" {
+		return
+	}
+
+	labelSet := signingRequestMetricLabelSet{address: address, clientCN: clientCN}
+	deletedSigningRequestMetrics.Store(labelSet, deletedSigningRequestMetric{expiresAt: time.Now().Add(deletedSigningRequestMetricTTL)})
+	pruneExpiredDeletedSigningRequestMetrics()
+	waitForSigningRequestLabelSetIdle(address, clientCN)
+	MetricSigningRequestsTotal.DeleteLabelValues(address, clientCN, "success")
+	MetricSigningRequestsTotal.DeleteLabelValues(address, clientCN, "error")
+}
+
+// IncSigningRequestsTotal increments the request counter for the given labelset.
+func IncSigningRequestsTotal(address, clientCN, status string) {
+	if isDeletedSigningRequestMetric(address, clientCN) {
+		return
+	}
+
+	MetricSigningRequestsTotal.WithLabelValues(address, clientCN, status).Inc()
+}
+
+func beginSigningRequest(address, clientCN string) {
+	labelSet := signingRequestMetricLabelSet{address: address, clientCN: clientCN}
+
+	signingRequestMetricsTracker.mu.Lock()
+	signingRequestMetricsTracker.inFlight[labelSet]++
+	signingRequestMetricsTracker.mu.Unlock()
+
+	MetricSigningRequestsInFlight.WithLabelValues(address).Inc()
+}
+
+func endSigningRequest(address, clientCN string) {
+	labelSet := signingRequestMetricLabelSet{address: address, clientCN: clientCN}
+
+	signingRequestMetricsTracker.mu.Lock()
+	count := signingRequestMetricsTracker.inFlight[labelSet]
+	switch {
+	case count <= 1:
+		delete(signingRequestMetricsTracker.inFlight, labelSet)
+		signingRequestMetricsTracker.cond.Broadcast()
+	default:
+		signingRequestMetricsTracker.inFlight[labelSet] = count - 1
+	}
+	signingRequestMetricsTracker.mu.Unlock()
+
+	MetricSigningRequestsInFlight.WithLabelValues(address).Dec()
+}
+
+func waitForSigningRequestLabelSetIdle(address, clientCN string) {
+	labelSet := signingRequestMetricLabelSet{address: address, clientCN: clientCN}
+
+	signingRequestMetricsTracker.mu.Lock()
+	defer signingRequestMetricsTracker.mu.Unlock()
+
+	for signingRequestMetricsTracker.inFlight[labelSet] > 0 {
+		signingRequestMetricsTracker.cond.Wait()
+	}
+}
+
+func isDeletedSigningRequestMetric(address, clientCN string) bool {
+	labelSet := signingRequestMetricLabelSet{address: address, clientCN: clientCN}
+
+	value, ok := deletedSigningRequestMetrics.Load(labelSet)
+	if !ok {
+		return false
+	}
+
+	deletedMetric, ok := value.(deletedSigningRequestMetric)
+	if !ok {
+		deletedSigningRequestMetrics.Delete(labelSet)
+		return false
+	}
+
+	if time.Now().After(deletedMetric.expiresAt) {
+		deletedSigningRequestMetrics.Delete(labelSet)
+		return false
+	}
+
+	return true
+}
+
+func pruneExpiredDeletedSigningRequestMetrics() {
+	now := time.Now()
+	deletedSigningRequestMetrics.Range(func(key, value any) bool {
+		deletedMetric, ok := value.(deletedSigningRequestMetric)
+		if !ok || now.After(deletedMetric.expiresAt) {
+			deletedSigningRequestMetrics.Delete(key)
+		}
+		return true
+	})
+}
 
 // Timer helps track request duration
 type Timer struct {

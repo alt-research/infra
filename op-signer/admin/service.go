@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/ethereum-optimism/infra/op-signer/provider"
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
@@ -13,11 +14,25 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
+// MetricsInitFunc initializes placeholder request metrics for a configured key.
+type MetricsInitFunc func(address, clientCN string)
+
+// MetricsDeleteFunc deletes request metrics for a key being removed.
+type MetricsDeleteFunc func(address, clientCN string)
+
 type AdminService struct {
 	logger log.Logger
 
-	providerConfig *provider.ProviderConfig
-	keys           KeysProvider
+	providerConfig  *provider.ProviderConfig
+	keys            KeysProvider
+	metricsInitFn   MetricsInitFunc
+	metricsDeleteFn MetricsDeleteFunc
+	mu              sync.Mutex
+}
+
+type metricLabelSet struct {
+	address  string
+	clientCN string
 }
 
 func NewAdminService(logger log.Logger, providerConfig *provider.ProviderConfig) (*AdminService, error) {
@@ -29,6 +44,55 @@ func NewAdminService(logger log.Logger, providerConfig *provider.ProviderConfig)
 
 func (s *AdminService) SetKeysProvider(keys KeysProvider) {
 	s.keys = keys
+}
+
+func (s *AdminService) SetMetricsInitFn(fn MetricsInitFunc) {
+	s.metricsInitFn = fn
+}
+
+func (s *AdminService) SetMetricsDeleteFn(fn MetricsDeleteFunc) {
+	s.metricsDeleteFn = fn
+}
+
+func collectMetricLabelCounts(auths []provider.AuthConfig) map[metricLabelSet]int {
+	counts := make(map[metricLabelSet]int, len(auths))
+	for _, authConfig := range auths {
+		if authConfig.AllowedClientCN == "" {
+			continue
+		}
+
+		labels := metricLabelSet{
+			address:  authConfig.FromAddress.Hex(),
+			clientCN: authConfig.AllowedClientCN,
+		}
+		counts[labels]++
+	}
+	return counts
+}
+
+func (s *AdminService) reconcileMetrics(before, after []provider.AuthConfig) {
+	if s.metricsInitFn == nil && s.metricsDeleteFn == nil {
+		return
+	}
+
+	beforeCounts := collectMetricLabelCounts(before)
+	afterCounts := collectMetricLabelCounts(after)
+
+	if s.metricsDeleteFn != nil {
+		for labels := range beforeCounts {
+			if afterCounts[labels] == 0 {
+				s.metricsDeleteFn(labels.address, labels.clientCN)
+			}
+		}
+	}
+
+	if s.metricsInitFn != nil {
+		for labels := range afterCounts {
+			if beforeCounts[labels] == 0 {
+				s.metricsInitFn(labels.address, labels.clientCN)
+			}
+		}
+	}
 }
 
 func (s *AdminService) RegisterAPIs(server *oprpc.Server) {
@@ -68,6 +132,9 @@ func (s *AdminService) tryAddPathPrefix(path string) string {
 }
 
 func (s *AdminService) AddConfig(ctx context.Context, keyConfig KeyConfig) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.logger.Info("adding new key config",
 		"path", keyConfig.Path,
 		"chainId", keyConfig.ParentChainID,
@@ -105,19 +172,33 @@ func (s *AdminService) AddConfig(ctx context.Context, keyConfig KeyConfig) (stri
 		ToAddresses:     nil,
 	}
 
+	before := s.providerConfig.Auth()
 	s.providerConfig.AddConfig(address, newAuthConfig)
+	s.reconcileMetrics(before, s.providerConfig.Auth())
 
 	return address, nil
 }
 
 func (s *AdminService) RemoveConfigByPath(_ context.Context, path string) (string, error) {
-	s.providerConfig.RemoveConfigByPath(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedPath := s.tryAddPathPrefix(path)
+
+	before := s.providerConfig.Auth()
+	s.providerConfig.RemoveConfigByPath(resolvedPath)
+	s.reconcileMetrics(before, s.providerConfig.Auth())
 
 	return path, nil
 }
 
 func (s *AdminService) RemoveConfig(_ context.Context, address string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	before := s.providerConfig.Auth()
 	s.providerConfig.RemoveConfig(address)
+	s.reconcileMetrics(before, s.providerConfig.Auth())
 
 	return address, nil
 }
