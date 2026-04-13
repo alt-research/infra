@@ -14,5 +14,6 @@ USER app
 WORKDIR /app
 
 COPY --from=builder /app/bin/op-signer /app
+COPY ./op-signer/admin.sh /app/admin.sh
 
 ENTRYPOINT ["/app/op-signer"]
