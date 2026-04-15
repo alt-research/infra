@@ -13,6 +13,11 @@ type SignatureProvider interface {
 	GetPublicKey(ctx context.Context, keyName string) ([]byte, error)
 }
 
+// KeyReloader is an optional interface for providers that cache keys and need manual reload capability
+type KeyReloader interface {
+	ReloadKey(ctx context.Context, keyName string) error
+}
+
 // ProviderType represents the provider for the key management service
 type ProviderType string
 

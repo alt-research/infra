@@ -25,6 +25,9 @@ type VaultOnePassSignatureProvider struct {
 	vaultCfg    vault.VaultAuthConfig
 }
 
+// Compile-time interface assertion
+var _ KeyReloader = (*VaultOnePassSignatureProvider)(nil)
+
 // NewVaultOnePassSignatureProvider creates a new VaultOnePassSignatureProvider and loads all configured keys
 func NewVaultOnePassSignatureProvider(logger log.Logger, config *ProviderConfig) (SignatureProvider, error) {
 	// Load Vault authentication configuration
@@ -223,4 +226,38 @@ func (l *VaultOnePassSignatureProvider) GetPublicKey(
 	pubKey := crypto.FromECDSAPub(&privateKey.PublicKey)
 	l.logger.Debug("retrieved public key", "keyName", keyName, "pubKeyLength", len(pubKey))
 	return pubKey, nil
+}
+
+// ReloadKey removes the cached key and reloads it from Vault
+func (l *VaultOnePassSignatureProvider) ReloadKey(ctx context.Context, keyName string) error {
+	l.logger.Info("reloading key", "keyName", keyName)
+
+	// Validate path first
+	if !l.isAllowedPath(keyName) {
+		l.logger.Error("Vault path is not allowed", "keyName", keyName)
+		return fmt.Errorf("vault path is not allowed: %s", keyName)
+	}
+
+	vaultPath, fieldName, err := VaultPathAndFieldName(keyName)
+	if err != nil {
+		l.logger.Error("Failed to parse vault path and field name", "keyName", keyName, "error", err)
+		return fmt.Errorf("failed to parse vault path and field name: %w", err)
+	}
+
+	// Read from Vault first (slow operation, outside lock)
+	key, err := l.parsePrivateKey(vaultPath, fieldName)
+	if err != nil {
+		l.logger.Error("Failed to parse key from vault", "keyName", keyName, "error", err)
+		return fmt.Errorf("failed to parse key from vault: %w", err)
+	}
+
+	// Swap the key atomically (fast operation, under lock)
+	l.mu.Lock()
+	l.keyMap[keyName] = key
+	l.mu.Unlock()
+
+	l.logger.Info("successfully reloaded key",
+		"keyName", keyName,
+		"address", crypto.PubkeyToAddress(key.PublicKey).Hex())
+	return nil
 }

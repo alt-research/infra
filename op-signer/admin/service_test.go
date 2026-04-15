@@ -265,3 +265,86 @@ func newTestPublicKey(t *testing.T) ([]byte, string) {
 
 	return crypto.FromECDSAPub(&key.PublicKey), crypto.PubkeyToAddress(key.PublicKey).Hex()
 }
+
+// mockKeysReloader is a mock KeysProvider that also implements KeysReloader
+type mockKeysReloader struct {
+	stubKeysProvider
+	reloadKeyCalls int
+	reloadKeyError error
+	reloadKeyName  string
+}
+
+func (m *mockKeysReloader) ReloadKey(_ context.Context, keyName string) error {
+	m.reloadKeyCalls++
+	m.reloadKeyName = keyName
+	return m.reloadKeyError
+}
+
+func TestReloadKeySuccess(t *testing.T) {
+	publicKey, _ := newTestPublicKey(t)
+
+	service, err := NewAdminService(log.New(), &provider.ProviderConfig{})
+	require.NoError(t, err)
+
+	mock := &mockKeysReloader{
+		stubKeysProvider: stubKeysProvider{publicKey: publicKey},
+	}
+	service.SetKeysProvider(mock)
+
+	err = service.ReloadKey(context.Background(), "test-key")
+	require.NoError(t, err)
+	require.Equal(t, 1, mock.reloadKeyCalls)
+	require.Equal(t, "test-key", mock.reloadKeyName)
+}
+
+func TestReloadKeyWithPathPrefix(t *testing.T) {
+	publicKey, _ := newTestPublicKey(t)
+
+	providerConfig := &provider.ProviderConfig{}
+	providerConfig.SetPathPrefix("vault/path")
+
+	service, err := NewAdminService(log.New(), providerConfig)
+	require.NoError(t, err)
+
+	mock := &mockKeysReloader{
+		stubKeysProvider: stubKeysProvider{publicKey: publicKey},
+	}
+	service.SetKeysProvider(mock)
+
+	err = service.ReloadKey(context.Background(), "my-key")
+	require.NoError(t, err)
+	require.Equal(t, 1, mock.reloadKeyCalls)
+	require.Equal(t, "vault/path/my-key", mock.reloadKeyName)
+}
+
+func TestReloadKeyProviderNotSupportReloader(t *testing.T) {
+	publicKey, _ := newTestPublicKey(t)
+
+	service, err := NewAdminService(log.New(), &provider.ProviderConfig{})
+	require.NoError(t, err)
+
+	// Use stubKeysProvider which does NOT implement KeysReloader
+	service.SetKeysProvider(stubKeysProvider{publicKey: publicKey})
+
+	err = service.ReloadKey(context.Background(), "test-key")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "provider does not support key reloading")
+}
+
+func TestReloadKeyProviderReturnsError(t *testing.T) {
+	publicKey, _ := newTestPublicKey(t)
+
+	service, err := NewAdminService(log.New(), &provider.ProviderConfig{})
+	require.NoError(t, err)
+
+	mock := &mockKeysReloader{
+		stubKeysProvider: stubKeysProvider{publicKey: publicKey},
+		reloadKeyError:   fmt.Errorf("vault connection failed"),
+	}
+	service.SetKeysProvider(mock)
+
+	err = service.ReloadKey(context.Background(), "test-key")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ReloadKey Failed")
+	require.Equal(t, 1, mock.reloadKeyCalls)
+}

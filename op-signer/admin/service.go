@@ -230,3 +230,24 @@ func (s *AdminService) GetConfigForPath(path string) (*KeyConfig, error) {
 		Path:            authConfig.KeyName,
 	}, nil
 }
+
+// ReloadKey reloads a key from Vault by path
+func (s *AdminService) ReloadKey(ctx context.Context, path string) error {
+	s.logger.Info("reloading key via admin API", "path", path)
+
+	resolvedPath := s.tryAddPathPrefix(path)
+
+	// Check if the provider supports key reloading
+	reloader, ok := s.keys.(KeysReloader)
+	if !ok {
+		return rpc.HTTPError{StatusCode: 400, Status: "Bad Request", Body: []byte("provider does not support key reloading")}
+	}
+
+	if err := reloader.ReloadKey(ctx, resolvedPath); err != nil {
+		s.logger.Error("failed to reload key", "path", resolvedPath, "error", err)
+		return rpc.HTTPError{StatusCode: 500, Status: "ReloadKey Failed", Body: []byte(err.Error())}
+	}
+
+	s.logger.Info("successfully reloaded key via admin API", "path", resolvedPath)
+	return nil
+}

@@ -48,6 +48,8 @@ auth:
 - `AWS`: Amazon Web Service's Key Management Service
   > AWS credentials must be provided
 - `LOCAL`: local private key files
+- `VAULT1PASS`: HashiCorp Vault with 1Password plugin
+  > Keys are cached in memory; use `alt_reloadKey` or `admin_reloadKey` to reload after key changes
 
 #### Local Provider
 
@@ -67,6 +69,28 @@ You can use the following command to generate such a key:
 ```shell
 openssl ecparam -name secp256k1 -genkey -noout -param_enc explicit -out "ec_private.pem"
 ```
+
+#### Vault 1Password Provider
+
+The `VAULT1PASS` provider uses HashiCorp Vault with the 1Password plugin to store private keys. Keys are cached in memory for performance.
+
+To reload a cached key after it's updated in Vault:
+
+**Client API** - reload the client's configured key:
+```bash
+curl -X POST http://signer-endpoint/client-path \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "alt_reloadKey", "params": [], "id": 1}'
+```
+
+**Admin API** - reload any key by path:
+```bash
+curl -X POST https://admin-endpoint \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "admin_reloadKey", "params": ["vault/path/key"], "id": 1}'
+```
+
+See [doc/op-signer-by-vault.md](doc/op-signer-by-vault.md) for detailed configuration.
 
 ## Testing with local TLS
 

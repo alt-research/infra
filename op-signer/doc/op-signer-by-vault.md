@@ -274,3 +274,61 @@ Use cmd:
 ```bash
 ./bin/op-signer admin --admin.password 123456 --admin.tls.cert ./tls/localhost/tls.crt --admin.tls.key ./tls/localhost/tls.key --admin.tls.ca ./tls/ca.crt remove-config --address 0x0000000000000000000000000000000000000000
 ```
+
+## Key Reloading
+
+When using the Vault provider, keys are cached in memory for performance. If a key is updated in Vault (e.g., rotated or changed), you need to trigger a reload to update the cached key.
+
+### Client API: alt_reloadKey
+
+Clients can reload their own configured key using the `alt_reloadKey` RPC method:
+
+```bash
+curl -X POST http://127.0.1:18545/testnet/batcher-private \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "alt_reloadKey",
+    "params": [],
+    "id": 1
+  }'
+{"jsonrpc":"2.0","id":1,"result":null}
+```
+
+This will reload the key configured for the authenticated client path.
+
+### Admin API: admin_reloadKey
+
+Admins can reload any key by specifying the path:
+
+```bash
+curl -X POST https://localhost:9545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "admin_reloadKey",
+    "params": ["op/vaults/testsign/items/testnet/batcher-private"],
+    "id": 1
+  }'
+{"jsonrpc":"2.0","id":1,"result":null}
+```
+
+Or using the CLI:
+
+```bash
+./bin/op-signer admin --admin.password 123456 --admin.tls.cert ./tls/localhost/tls.crt --admin.tls.key ./tls/localhost/tls.key --admin.tls.ca ./tls/ca.crt reload-key --path op/vaults/testsign/items/testnet/batcher-private
+```
+
+### When to Reload Keys
+
+You should reload keys when:
+
+1. **Key Rotation**: When a private key is rotated in Vault
+2. **Key Update**: When a key's value is changed in Vault
+3. **Emergency Response**: After recovering from a key compromise
+
+### Notes
+
+- The reload operation reads from Vault and swaps the cached key atomically, ensuring no race conditions
+- If Vault is unavailable during reload, the old cached key remains usable until a successful reload
+- The reload API only works with `VAULT1PASS` provider; other providers (GCP, AWS) do not cache keys

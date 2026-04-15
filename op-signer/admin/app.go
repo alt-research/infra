@@ -23,6 +23,11 @@ type KeysProvider interface {
 	GetPublicKey(ctx context.Context, keyName string) ([]byte, error)
 }
 
+// KeysReloader is an optional interface for providers that support key reloading
+type KeysReloader interface {
+	ReloadKey(ctx context.Context, keyName string) error
+}
+
 type AdminApp struct {
 	log log.Logger
 
