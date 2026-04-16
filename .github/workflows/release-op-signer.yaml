@@ -1,0 +1,43 @@
+name: Build Release (op-signer)
+on:
+  push:
+    tags: ['*']
+  workflow_dispatch:
+
+env:
+  ECR_REPO: 305587085711.dkr.ecr.us-west-2.amazonaws.com/op-signer
+
+jobs:
+  build_image:
+    name: Build docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Login to ECR
+        uses: docker/login-action@v3
+        with:
+          registry: 305587085711.dkr.ecr.us-west-2.amazonaws.com
+          username: ${{ secrets.ECR_ACCESS_KEY_ID }}
+          password: ${{ secrets.ECR_ACCESS_KEY }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.ECR_REPO }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push images
+        uses: docker/build-push-action@v5
+        id: docker_build
+        with:
+          context: .
+          file: ./op-signer/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
