@@ -62,7 +62,7 @@ func NewVaultClient(logger log.Logger, cfg VaultAuthConfig) (*api.Client, error)
 			return nil, fmt.Errorf("kubernetes auth failed: %w", err)
 		}
 		// Start token renewal goroutine
-		go renewToken(logger, client, cfg.TokenRenewInterval)
+		go renewToken(logger, client, cfg, cfg.TokenRenewInterval)
 
 	case "token", "":
 		// Traditional static token authentication
@@ -116,8 +116,8 @@ func authenticateKubernetes(logger log.Logger, client *api.Client, cfg VaultAuth
 	return nil
 }
 
-// renewToken periodically renews the Vault token
-func renewToken(logger log.Logger, client *api.Client, interval time.Duration) {
+// renewToken periodically renews the Vault token, re-authenticating from scratch if renewal fails
+func renewToken(logger log.Logger, client *api.Client, cfg VaultAuthConfig, interval time.Duration) {
 	if interval == 0 {
 		interval = 1 * time.Hour // Default renewal interval
 	}
@@ -131,7 +131,12 @@ func renewToken(logger log.Logger, client *api.Client, interval time.Duration) {
 		secret, err := client.Auth().Token().RenewSelf(0)
 		if err != nil {
 			logger.Error("Failed to renew Vault token", "error", err)
-			logger.Error("Token renewal will be retried", "interval", interval)
+			logger.Info("Re-authenticating to Vault via Kubernetes auth")
+			if authErr := authenticateKubernetes(logger, client, cfg); authErr != nil {
+				logger.Error("Re-authentication failed, will retry", "error", authErr, "interval", interval)
+			} else {
+				logger.Info("Re-authentication successful")
+			}
 			continue
 		}
 
