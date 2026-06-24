@@ -72,22 +72,8 @@ func (s *SignerApp) init(cfg *Config) error {
 
 	s.pathRootPrefix = os.Getenv("OP_SIGNER_VAULT_ROOT_PATH_PREFIX")
 
-	// Get API password hash (bcrypt hash of the password)
-	apiPasswordHash := os.Getenv("API_PASSWORD_HASH")
-	if apiPasswordHash == "" {
-		return errors.New("API_PASSWORD_HASH environment variable is required")
-	}
-
-	// Derive encryption key from the password hash
-	// This allows us to use the same password for both API auth and file encryption
-	encryptionKey := provider.DeriveEncryptionKey(apiPasswordHash)
-
-	// Check if config file is JSON or YAML to determine which reader to use
-	var providerCfg *provider.ProviderConfig
-	var err error
-
 	s.log.Info("Reading provider config", "path", cfg.ServiceConfigPath)
-	providerCfg, err = provider.ReadConfigFromJSON(s.log, cfg.ServiceConfigPath, encryptionKey)
+	providerCfg, err := provider.ReadConfigFromJSON(s.log, cfg.ServiceConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read provider config from JSON: %w", err)
 	}

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -8,78 +9,101 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-func TestJSONPersistence(t *testing.T) {
-	// Create a temporary JSON file for testing
+func TestReadConfigFromJSON(t *testing.T) {
 	tempFile := "/tmp/test_provider_config.json"
-	defer os.Remove(tempFile) // Clean up after test
-
-	// Create a new ProviderConfig
-	config := &ProviderConfig{
-		providerType:        KeyProviderVault1Pass,
-		encryptionKey:       DeriveEncryptionKey("123456"),
-		persistenceFilePath: tempFile,
-	}
-
-	// Add a test auth config
-	testAuthConfig := AuthConfig{
-		ClientName:      "test_client",
-		KeyName:         "test_key",
-		ChainID:         1,
-		FromAddress:     common.HexToAddress("0x1234567890123456789012345678901234567890"),
-		ToAddresses:     []string{"0x1234567890123456789012345678901234567890"},
-		MaxValue:        "0x0",
-		AllowedClientCN: "test_cn",
-	}
-
-	// Add the config
-	config.AddConfig("0x1234567890123456789012345678901234567890", testAuthConfig)
-
-	// Check that the file was created and contains the data
-	data, err := os.ReadFile(tempFile)
-	if err != nil {
-		t.Fatalf("Failed to read temp file: %v", err)
-	}
-
-	if len(data) == 0 {
-		t.Fatal("Config file is empty")
-	}
+	defer os.Remove(tempFile)
 
 	logger := log.NewLogger(log.DiscardHandler())
 
-	// Create a new config instance and load from the JSON file
-	loadedConfig, err := ReadConfigFromJSON(logger, tempFile, DeriveEncryptionKey("123456"))
+	// Write a valid plaintext config
+	cfg := ProviderConfigJSON{
+		ProviderType: KeyProviderGCP,
+		Auth: []AuthConfig{
+			{
+				ClientName:      "test_client",
+				KeyName:         "test_key",
+				ChainID:         1,
+				FromAddress:     common.HexToAddress("0x1234567890123456789012345678901234567890"),
+				ToAddresses:     []string{"0x1234567890123456789012345678901234567890"},
+				MaxValue:        "0x0",
+				AllowedClientCN: "test_cn",
+			},
+		},
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Failed to marshal config: %v", err)
+	}
+	if err := os.WriteFile(tempFile, data, 0600); err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+
+	loadedConfig, err := ReadConfigFromJSON(logger, tempFile)
 	if err != nil {
 		t.Fatalf("Failed to read config from JSON: %v", err)
 	}
 
-	if loadedConfig.Type() != KeyProviderVault1Pass {
+	if loadedConfig.Type() != KeyProviderGCP {
 		t.Errorf("Expected provider type GCP, got %s", loadedConfig.Type())
 	}
 
 	authConfigs := loadedConfig.Auth()
 	if len(authConfigs) != 1 {
-		t.Errorf("Expected 1 auth config, got %d", len(authConfigs))
-	} else {
-		if authConfigs[0].ClientName != "test_client" {
-			t.Errorf("Expected client name 'test_client', got %s", authConfigs[0].ClientName)
-		}
-		if authConfigs[0].KeyName != "test_key" {
-			t.Errorf("Expected key name 'test_key', got %s", authConfigs[0].KeyName)
-		}
+		t.Fatalf("Expected 1 auth config, got %d", len(authConfigs))
 	}
+	if authConfigs[0].ClientName != "test_client" {
+		t.Errorf("Expected client name 'test_client', got %s", authConfigs[0].ClientName)
+	}
+	if authConfigs[0].KeyName != "test_key" {
+		t.Errorf("Expected key name 'test_key', got %s", authConfigs[0].KeyName)
+	}
+}
 
-	// Test removing a config
-	config.RemoveConfig("0x1234567890123456789012345678901234567890")
+func TestReadConfigFromJSON_InMemoryMutations(t *testing.T) {
+	tempFile := "/tmp/test_provider_config_mutations.json"
+	defer os.Remove(tempFile)
 
-	// Reload and verify it's gone
-	loadedConfig2, err := ReadConfigFromJSON(logger, tempFile, DeriveEncryptionKey("123456"))
+	logger := log.NewLogger(log.DiscardHandler())
+
+	cfg := ProviderConfigJSON{
+		ProviderType: KeyProviderGCP,
+		Auth: []AuthConfig{
+			{
+				ClientName:  "original_client",
+				KeyName:     "original_key",
+				FromAddress: common.HexToAddress("0x1234567890123456789012345678901234567890"),
+				MaxValue:    "0x0",
+			},
+		},
+	}
+	data, _ := json.Marshal(cfg)
+	os.WriteFile(tempFile, data, 0600)
+
+	loadedConfig, err := ReadConfigFromJSON(logger, tempFile)
 	if err != nil {
-		t.Fatalf("Failed to read config from JSON after removal: %v", err)
-	}
-	authConfigs2 := loadedConfig2.Auth()
-	if len(authConfigs2) != 0 {
-		t.Errorf("Expected 0 auth configs after removal, got %d", len(authConfigs2))
+		t.Fatalf("Failed to read config: %v", err)
 	}
 
-	t.Log("JSON persistence test passed!")
+	// AddConfig is in-memory only — file should not change
+	loadedConfig.AddConfig("0xdeadbeef", AuthConfig{
+		ClientName:  "new_client",
+		KeyName:     "new_key",
+		FromAddress: common.HexToAddress("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+		MaxValue:    "0x0",
+	})
+
+	if len(loadedConfig.Auth()) != 2 {
+		t.Errorf("Expected 2 auth configs in memory, got %d", len(loadedConfig.Auth()))
+	}
+
+	// File on disk should still have only 1 entry
+	reloaded, err := ReadConfigFromJSON(logger, tempFile)
+	if err != nil {
+		t.Fatalf("Failed to re-read config: %v", err)
+	}
+	if len(reloaded.Auth()) != 1 {
+		t.Errorf("Expected file to still have 1 auth config, got %d", len(reloaded.Auth()))
+	}
+
+	t.Log("In-memory mutation test passed!")
 }

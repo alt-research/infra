@@ -37,9 +37,7 @@ type ProviderConfig struct {
 	auth         []AuthConfig `yaml:"auth" json:"auth"`
 	pathPrefix   string       `yaml:"path_prefix" json:"path_prefix"`
 
-	persistenceFilePath string
-	encryptionKey       []byte
-	mu                  sync.RWMutex
+	mu sync.RWMutex
 }
 
 type ProviderConfigJSON struct {
@@ -85,52 +83,11 @@ func (c *ProviderConfig) PathPrefix() string {
 	return c.pathPrefix
 }
 
-func (c *ProviderConfig) saveToJSON() error {
-	if c.persistenceFilePath == "" {
-		return nil // No persistence file set, skip saving
-	}
-
-	// Prepare a copy of the config for marshaling to avoid holding the lock during file I/O
-	configCopy := ProviderConfigJSON{
-		ProviderType: c.providerType,
-		Auth:         make([]AuthConfig, len(c.auth)),
-	}
-	copy(configCopy.Auth, c.auth)
-
-	data, err := json.MarshalIndent(configCopy, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal config to JSON: %w", err)
-	}
-
-	encrypted, err := Encrypt(data, c.encryptionKey)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt config JSON: %w", err)
-	}
-
-	// Write to a temporary file first, then rename to prevent corruption during write
-	tempFile := c.persistenceFilePath + ".tmp"
-	if err := os.WriteFile(tempFile, encrypted, 0644); err != nil {
-		return fmt.Errorf("failed to write config to temp file: %w", err)
-	}
-
-	if err := os.Rename(tempFile, c.persistenceFilePath); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	return nil
-}
-
 func (c *ProviderConfig) AddConfig(address string, authConfig AuthConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.auth = append(c.auth, authConfig)
-
-	// Attempt to persist to JSON file
-	if c.persistenceFilePath != "" {
-		// Save to JSON while holding the lock
-		_ = c.saveToJSON()
-	}
 }
 
 func (c *ProviderConfig) RemoveConfig(address string) {
@@ -138,19 +95,12 @@ func (c *ProviderConfig) RemoveConfig(address string) {
 	defer c.mu.Unlock()
 
 	newAuthCfg := make([]AuthConfig, 0, len(c.auth))
-
 	for _, ac := range c.auth {
 		if ac.FromAddress.Hex() != address {
 			newAuthCfg = append(newAuthCfg, ac)
 		}
 	}
-
 	c.auth = newAuthCfg
-
-	// Attempt to persist to JSON file
-	if c.persistenceFilePath != "" {
-		_ = c.saveToJSON()
-	}
 }
 
 func (c *ProviderConfig) RemoveConfigByPath(path string) {
@@ -164,11 +114,6 @@ func (c *ProviderConfig) RemoveConfigByPath(path string) {
 		}
 	}
 	c.auth = newAuthCfg
-
-	// Attempt to persist to JSON file
-	if c.persistenceFilePath != "" {
-		_ = c.saveToJSON()
-	}
 }
 
 func (c *ProviderConfig) GetConfigByPath(path string) (*AuthConfig, error) {
@@ -210,101 +155,55 @@ func (c *ProviderConfig) Auth() []AuthConfig {
 	return res
 }
 
-func tryToReadConfigFromRawJSON(data []byte, encryptionKey []byte) *ProviderConfigJSON {
-
-	// try to decrypt the json raw data
-	// Create a temporary config to unmarshal to
-	tempConfig := ProviderConfigJSON{}
-
-	if err := json.Unmarshal(data, &tempConfig); err != nil {
-		return nil
-	}
-
-	if tempConfig.ProviderType != "" && len(tempConfig.Auth) > 0 && tempConfig.Auth[0].KeyName != "" {
-		return &tempConfig
-	}
-
-	return nil
-}
-
-func readConfigFromJSON(encrypted []byte, encryptionKey []byte) (*ProviderConfigJSON, error) {
-	jsonConfig := tryToReadConfigFromRawJSON(encrypted, encryptionKey)
-	if jsonConfig != nil {
-		return jsonConfig, nil
-	}
-
-	// Decrypt data
-	data, err := Decrypt(encrypted, encryptionKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt config: %w", err)
-	}
-
-	jsonConfigFromDecrypted := tryToReadConfigFromRawJSON(data, encryptionKey)
-	if jsonConfigFromDecrypted != nil {
-		return jsonConfigFromDecrypted, nil
-	}
-
-	// Empty config
-	return &ProviderConfigJSON{}, nil
-}
-
-// ReadConfigFromJSON reads a ProviderConfig from a JSON file
-func ReadConfigFromJSON(log log.Logger, path string, encryptionKey []byte) (*ProviderConfig, error) {
-	// Check if file exists
+// ReadConfigFromJSON reads a ProviderConfig from a plaintext JSON file.
+// The config file is read-only at startup; to update keys, edit the file
+// and restart the signer (same pattern as nitro-external-signer).
+func ReadConfigFromJSON(log log.Logger, path string) (*ProviderConfig, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		log.Info("Config file does not exist, creating default config", "path", path)
-		return &ProviderConfig{
-			providerType:        KeyProviderVault1Pass,
-			auth:                make([]AuthConfig, 0, 16),
-			encryptionKey:       encryptionKey,
-			persistenceFilePath: path,
-		}, nil
+		return nil, fmt.Errorf("config file does not exist: %s", path)
 	}
 
-	encrypted, err := os.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		config := ProviderConfig{}
 		log.Error("Failed to read config file", "path", path, "error", err)
-		return &config, err
+		return nil, err
 	}
 
-	tempConfig, err := readConfigFromJSON(encrypted, encryptionKey)
-	if err != nil {
-		log.Error("Failed to read config from JSON", "path", path, "error", err)
-		return nil, err
+	var tempConfig ProviderConfigJSON
+	if err := json.Unmarshal(data, &tempConfig); err != nil {
+		log.Error("Failed to parse config JSON", "path", path, "error", err)
+		return nil, fmt.Errorf("failed to parse config JSON: %w", err)
 	}
 
 	log.Debug("Successfully read config from JSON", "path", path)
 
 	config := &ProviderConfig{
-		providerType:        tempConfig.ProviderType,
-		auth:                tempConfig.Auth,
-		encryptionKey:       encryptionKey,
-		persistenceFilePath: path,
+		providerType: tempConfig.ProviderType,
+		auth:         tempConfig.Auth,
 	}
 
-	// Default to GCP if Provider is empty
 	if config.providerType == "" {
-		config.providerType = KeyProviderVault1Pass
+		return nil, fmt.Errorf("provider field is required in config")
 	}
 
 	if !config.providerType.IsValid() {
-		return config, fmt.Errorf("invalid provider '%s' in config. Must be 'AWS', 'GCP', 'LOCAL', or 'LOCALKEY'", config.providerType)
+		return nil, fmt.Errorf("invalid provider '%s' in config. Must be 'AWS', 'GCP', 'LOCAL', or 'LOCALKEY'", config.providerType)
 	}
 
 	for _, authConfig := range config.auth {
 		for _, toAddress := range authConfig.ToAddresses {
 			if _, err := hexutil.Decode(toAddress); err != nil {
-				return config, fmt.Errorf("invalid toAddress '%s' in auth config: %w", toAddress, err)
+				return nil, fmt.Errorf("invalid toAddress '%s' in auth config: %w", toAddress, err)
 			}
-			if authConfig.MaxValue != "" {
-				if _, err := hexutil.DecodeBig(authConfig.MaxValue); err != nil {
-					return config, fmt.Errorf("invalid maxValue '%s' in auth config: %w", toAddress, err)
-				}
+		}
+		if authConfig.MaxValue != "" {
+			if _, err := hexutil.DecodeBig(authConfig.MaxValue); err != nil {
+				return nil, fmt.Errorf("invalid maxValue '%s' in auth config: %w", authConfig.MaxValue, err)
 			}
 		}
 	}
-	return config, err
+
+	return config, nil
 }
 
 func (s *ProviderConfig) GetAuthConfigForClient(clientName string, fromAddress *common.Address) (*AuthConfig, error) {
