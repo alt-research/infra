@@ -130,7 +130,7 @@ func NewConfig(ctx *cli.Context) *Config {
 		MetricsConfig:     opmetrics.ReadCLIConfig(ctx),
 		PprofConfig:       oppprof.ReadCLIConfig(ctx),
 		AdminConfig: admin.Config{
-			Enabled: ctx.Bool("admin.tls.enabled"),
+			Enabled: ctx.Bool("admin.rpc.enable-admin"),
 			RPCConfig: oprpc.CLIConfig{
 				ListenAddr:  ctx.String("admin.rpc.addr"),
 				ListenPort:  ctx.Int("admin.rpc.port"),
