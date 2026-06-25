@@ -113,23 +113,29 @@ func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig)
 		s.log.Warn("TLS disabled. This is insecure and only supported for local development. Please enable TLS in production environments!")
 	}
 
-	// Get API password hash (bcrypt hash of the password)
-	apiPasswordHash := os.Getenv("API_PASSWORD_HASH")
-	if apiPasswordHash == "" {
-		return errors.New("API_PASSWORD_HASH environment variable is required")
+	rpcCfg := cfg.RPCConfig
+	rpcOptions := []oprpc.Option{
+		oprpc.WithHTTPRecorder(opmetrics.NewPromHTTPRecorder(s.registry, "admin")),
+		oprpc.WithLogger(s.log),
 	}
 
-	rpcCfg := cfg.RPCConfig
+	// When TLS is enabled, require a bcrypt-hashed password for the admin API.
+	// When TLS is disabled the admin port is bound to localhost only and no
+	// password is required (same pattern as nitro-external-signer).
+	if cfg.TLSConfig.Enabled {
+		apiPasswordHash := os.Getenv("API_PASSWORD_HASH")
+		if apiPasswordHash == "" {
+			return errors.New("API_PASSWORD_HASH environment variable is required when admin TLS is enabled")
+		}
+		rpcOptions = append(rpcOptions, oprpc.WithMiddleware(auth.NewAuthByPasswordMiddleware(s.log, []byte(apiPasswordHash))))
+	}
+
 	s.rpc = oprpc.ServerFromConfig(
 		&oprpc.ServerConfig{
-			AppVersion: s.version,
-			Host:       rpcCfg.ListenAddr,
-			Port:       rpcCfg.ListenPort,
-			RpcOptions: []oprpc.Option{
-				oprpc.WithMiddleware(auth.NewAuthByPasswordMiddleware(s.log, []byte(apiPasswordHash))),
-				oprpc.WithHTTPRecorder(opmetrics.NewPromHTTPRecorder(s.registry, "admin")),
-				oprpc.WithLogger(s.log),
-			},
+			AppVersion:  s.version,
+			Host:        rpcCfg.ListenAddr,
+			Port:        rpcCfg.ListenPort,
+			RpcOptions:  rpcOptions,
 			HttpOptions: httpOptions,
 		},
 	)
