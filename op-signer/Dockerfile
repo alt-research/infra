@@ -9,8 +9,6 @@ RUN make build
 FROM alpine:3.22
 RUN apk --no-cache add ca-certificates
 
-RUN addgroup -S app && adduser -S app -G app
-USER app
 WORKDIR /app
 
 COPY --from=builder /app/bin/op-signer /app
