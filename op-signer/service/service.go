@@ -121,27 +121,14 @@ func (s *EthService) SignTransaction(ctx context.Context, args signer.Transactio
 		return nil, &InvalidTransactionError{message: err.Error()}
 	}
 
-	if s.adminService != nil {
-		clientCN, err := s.adminService.GetConfigForPath(authConfig.KeyName)
-		if err != nil {
-			s.logger.Warn("invalid client GetConfigForPath", "err", err)
-			labels["error"] = "invalid_client"
-			IncSigningRequestsTotal(signerAddress, clientInfo.ClientCN, "error")
-			MetricSigningErrorsTotal.WithLabelValues(signerAddress, "invalid_client").Inc()
-			MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
-			timer.RecordDuration("error")
-			return nil, &InvalidClientError{message: err.Error()}
-		}
-
-		if clientCN.AllowedClientCN != "" && clientCN.AllowedClientCN != clientInfo.ClientCN {
-			s.logger.Warn("client CN not authorized", "clientCN", clientInfo.ClientCN, "allowedCN", clientCN.AllowedClientCN)
-			labels["error"] = "unauthorized_client"
-			IncSigningRequestsTotal(signerAddress, clientInfo.ClientCN, "error")
-			MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unauthorized_client").Inc()
-			MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
-			timer.RecordDuration("error")
-			return nil, &UnauthorizedClientError{message: "client CN not authorized"}
-		}
+	if authConfig.AllowedClientCN != "" && authConfig.AllowedClientCN != clientInfo.ClientCN {
+		s.logger.Warn("client CN not authorized", "clientCN", clientInfo.ClientCN, "allowedCN", authConfig.AllowedClientCN)
+		labels["error"] = "unauthorized_client"
+		IncSigningRequestsTotal(signerAddress, clientInfo.ClientCN, "error")
+		MetricSigningErrorsTotal.WithLabelValues(signerAddress, "unauthorized_client").Inc()
+		MetricRPCTotal.WithLabelValues("eth_signTransaction", "error").Inc()
+		timer.RecordDuration("error")
+		return nil, &UnauthorizedClientError{message: "client CN not authorized"}
 	}
 
 	if len(authConfig.ToAddresses) > 0 && !containsNormalized(authConfig.ToAddresses, args.To.Hex()) {
