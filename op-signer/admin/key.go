@@ -2,6 +2,9 @@ package admin
 
 // KeyConfig defines the configuration for retrieving and using a private key from Vault
 type KeyConfig struct {
+	// Address is the Ethereum address derived from the KMS public key at startup.
+	Address string `json:"address"`
+
 	Path string `json:"path"` // Vault path to the key (e.g., "secret/data/my-key")
 
 	// ParentChainID is REQUIRED for go-ethereum v1.16.8+ compatibility.

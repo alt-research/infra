@@ -155,6 +155,16 @@ func (c *ProviderConfig) Auth() []AuthConfig {
 	return res
 }
 
+// ReplaceAuth replaces the full auth slice atomically.
+// Used at startup to update fromAddress fields with addresses derived from KMS public keys.
+func (c *ProviderConfig) ReplaceAuth(auths []AuthConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.auth = make([]AuthConfig, len(auths))
+	copy(c.auth, auths)
+}
+
 // ReadConfigFromJSON reads a ProviderConfig from a plaintext JSON file.
 // The config file is read-only at startup; to update keys, edit the file
 // and restart the signer (same pattern as nitro-external-signer).

@@ -46,10 +46,6 @@ func NewSignerService(logger log.Logger, config *provider.ProviderConfig, adminS
 		return nil, fmt.Errorf("failed to create signature provider: %w", err)
 	}
 
-	if adminService != nil {
-		adminService.SetKeysProvider(provider)
-	}
-
 	return NewSignerServiceWithProvider(logger, config, provider, adminService), nil
 }
 
@@ -63,6 +59,11 @@ func NewSignerServiceWithProvider(
 	opsignerService := OpsignerService{logger, config, provider}
 	altService := AltService{logger, config, provider}
 	return &SignerService{&ethService, &opsignerService, &altService, adminService}
+}
+
+// GetPublicKey fetches the raw uncompressed public key bytes for the given key name.
+func (s *SignerService) GetPublicKey(ctx context.Context, keyName string) ([]byte, error) {
+	return s.eth.provider.GetPublicKey(ctx, keyName)
 }
 
 func (s *SignerService) RegisterAPIs(server *oprpc.Server) {

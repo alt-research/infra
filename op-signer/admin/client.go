@@ -2,13 +2,10 @@ package admin
 
 import (
 	"bytes"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync/atomic"
 )
 
@@ -38,49 +35,20 @@ func (e *jsonRPCError) Error() string {
 	return fmt.Sprintf("rpc error (code %d): %s", e.Code, e.Message)
 }
 
-// AdminClient wraps HTTP calls to the admin JSON-RPC API
+// AdminClient wraps HTTP calls to the admin JSON-RPC API.
+// The admin port is localhost-only with no authentication required.
 type AdminClient struct {
 	endpoint string
-	password string
 	client   *http.Client
 	nextID   atomic.Uint64
 }
 
-// NewAdminClient creates an AdminClient with TLS and basic auth configured.
-// If tlsCert/tlsKey are empty, no client certificate is used.
-// If caCert is empty, the system CA pool is used.
-func NewAdminClient(endpoint, password, tlsCert, tlsKey, caCert string) (*AdminClient, error) {
-	tlsConfig := &tls.Config{}
-
-	if tlsCert != "" && tlsKey != "" {
-		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			return nil, fmt.Errorf("loading client cert/key: %w", err)
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-	}
-
-	if caCert != "" {
-		caCertPEM, err := os.ReadFile(caCert)
-		if err != nil {
-			return nil, fmt.Errorf("reading CA cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(caCertPEM) {
-			return nil, fmt.Errorf("failed to parse CA cert")
-		}
-		tlsConfig.RootCAs = pool
-	}
-
+// NewAdminClient creates an AdminClient for the given endpoint.
+func NewAdminClient(endpoint string) *AdminClient {
 	return &AdminClient{
 		endpoint: endpoint,
-		password: password,
-		client: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tlsConfig,
-			},
-		},
-	}, nil
+		client:   &http.Client{},
+	}
 }
 
 // call sends a JSON-RPC 2.0 request and returns the result
@@ -103,7 +71,6 @@ func (c *AdminClient) call(method string, params []any) (json.RawMessage, error)
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth("", c.password)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -132,7 +99,7 @@ func (c *AdminClient) call(method string, params []any) (json.RawMessage, error)
 	return rpcResp.Result, nil
 }
 
-// GetConfigs returns all key configurations
+// GetConfigs returns all key configurations including derived Ethereum addresses.
 func (c *AdminClient) GetConfigs() ([]KeyConfig, error) {
 	result, err := c.call("admin_getConfigs", nil)
 	if err != nil {
@@ -143,68 +110,4 @@ func (c *AdminClient) GetConfigs() ([]KeyConfig, error) {
 		return nil, fmt.Errorf("unmarshaling configs: %w", err)
 	}
 	return configs, nil
-}
-
-// AddConfig adds a new key configuration for the given address
-func (c *AdminClient) AddConfig(keyConfig KeyConfig) (string, error) {
-	result, err := c.call("admin_addConfig", []any{keyConfig})
-	if err != nil {
-		return "", err
-	}
-	var msg string
-	if err := json.Unmarshal(result, &msg); err != nil {
-		return "", fmt.Errorf("unmarshaling result: %w", err)
-	}
-	return msg, nil
-}
-
-func (c *AdminClient) RemoveConfigByPath(path string) (string, error) {
-	result, err := c.call("admin_removeConfigByPath", []any{path})
-	if err != nil {
-		return "", err
-	}
-	var msg string
-	if err := json.Unmarshal(result, &msg); err != nil {
-		return "", fmt.Errorf("unmarshaling result: %w", err)
-	}
-	return msg, nil
-}
-
-// RemoveConfig removes the key configuration for the given address
-func (c *AdminClient) RemoveConfig(address string) (string, error) {
-	result, err := c.call("admin_removeConfig", []any{address})
-	if err != nil {
-		return "", err
-	}
-	var msg string
-	if err := json.Unmarshal(result, &msg); err != nil {
-		return "", fmt.Errorf("unmarshaling result: %w", err)
-	}
-	return msg, nil
-}
-
-// GetConfigForAddress returns the key configuration for the given address
-func (c *AdminClient) GetConfigForAddress(address string) (*KeyConfig, error) {
-	result, err := c.call("admin_getConfigForAddress", []any{address})
-	if err != nil {
-		return nil, err
-	}
-	var config KeyConfig
-	if err := json.Unmarshal(result, &config); err != nil {
-		return nil, fmt.Errorf("unmarshaling config: %w", err)
-	}
-	return &config, nil
-}
-
-// GetConfigForPath returns the key configuration for the given vault path
-func (c *AdminClient) GetConfigForPath(path string) (*KeyConfig, error) {
-	result, err := c.call("admin_getConfigForPath", []any{path})
-	if err != nil {
-		return nil, err
-	}
-	var config KeyConfig
-	if err := json.Unmarshal(result, &config); err != nil {
-		return nil, fmt.Errorf("unmarshaling config: %w", err)
-	}
-	return &config, nil
 }

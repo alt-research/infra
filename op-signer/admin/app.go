@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -19,26 +18,12 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/tls/certman"
 )
 
-type KeysProvider interface {
-	GetPublicKey(ctx context.Context, keyName string) ([]byte, error)
-}
-
-// KeysReloader is an optional interface for providers that support key reloading
-type KeysReloader interface {
-	ReloadKey(ctx context.Context, keyName string) error
-}
-
 type AdminApp struct {
-	log log.Logger
-
-	version string
-
-	registry        *prometheus.Registry
-	service         *AdminService
-	metricsInitFn   MetricsInitFunc
-	metricsDeleteFn MetricsDeleteFunc
-
-	rpc *oprpc.Server
+	log      log.Logger
+	version  string
+	registry *prometheus.Registry
+	service  *AdminService
+	rpc      *oprpc.Server
 }
 
 func NewAdminApp(logger log.Logger, registry *prometheus.Registry) *AdminApp {
@@ -48,7 +33,6 @@ func NewAdminApp(logger log.Logger, registry *prometheus.Registry) *AdminApp {
 	}
 }
 
-// SetVersion sets the version of the admin app
 func (s *AdminApp) SetVersion(version string) {
 	s.version = version
 }
@@ -57,25 +41,10 @@ func (s *AdminApp) Service() *AdminService {
 	return s.service
 }
 
-func (s *AdminApp) SetMetricsInitFn(fn MetricsInitFunc) {
-	s.metricsInitFn = fn
-	if s.service != nil {
-		s.service.SetMetricsInitFn(fn)
-	}
-}
-
-func (s *AdminApp) SetMetricsDeleteFn(fn MetricsDeleteFunc) {
-	s.metricsDeleteFn = fn
-	if s.service != nil {
-		s.service.SetMetricsDeleteFn(fn)
-	}
-}
-
 func (s *AdminApp) Init(cfg *Config, providerConfig *provider.ProviderConfig) error {
 	if err := s.initRPC(cfg, providerConfig); err != nil {
 		return fmt.Errorf("failed to initialize RPC: %w", err)
 	}
-
 	return nil
 }
 
@@ -101,7 +70,7 @@ func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig)
 		tlsConfig := &tls.Config{
 			GetCertificate: cm.GetCertificate,
 			ClientCAs:      caCertPool,
-			ClientAuth:     tls.VerifyClientCertIfGiven, // necessary for k8s healthz probes, but we check the cert in service/auth.go
+			ClientAuth:     tls.VerifyClientCertIfGiven,
 		}
 		serverTlsConfig := &httputil.ServerTLSConfig{
 			Config:    tlsConfig,
@@ -145,8 +114,6 @@ func (s *AdminApp) initRPC(cfg *Config, providerConfig *provider.ProviderConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create signer service: %w", err)
 	}
-	s.service.SetMetricsInitFn(s.metricsInitFn)
-	s.service.SetMetricsDeleteFn(s.metricsDeleteFn)
 	s.service.RegisterAPIs(s.rpc)
 	return nil
 }

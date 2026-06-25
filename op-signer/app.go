@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
@@ -211,6 +212,34 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 	}
 	s.signer.RegisterAPIs(s.rpc)
 
+	// Validate KMS reachability and derive Ethereum addresses at startup.
+	// This mirrors nitro-external-signer behaviour: fetch the public key for every
+	// configured key, derive its Ethereum address, log it, and update fromAddress in
+	// the provider config so signing requests are matched correctly.
+	auths := providerCfg.Auth()
+	for i, authConfig := range auths {
+		if authConfig.KeyName == "" {
+			continue
+		}
+		pubKeyBytes, err := s.signer.GetPublicKey(context.Background(), authConfig.KeyName)
+		if err != nil {
+			return fmt.Errorf("failed to fetch public key for key %q: %w", authConfig.KeyName, err)
+		}
+		pubKey, err := crypto.UnmarshalPubkey(pubKeyBytes)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal public key for key %q: %w", authConfig.KeyName, err)
+		}
+		derivedAddr := crypto.PubkeyToAddress(*pubKey)
+		s.log.Info("Validated KMS key",
+			"key", authConfig.KeyName,
+			"address", derivedAddr.Hex(),
+			"allowed_client_cn", authConfig.AllowedClientCN,
+		)
+		// Update fromAddress in the provider config with the real derived address.
+		auths[i].FromAddress = derivedAddr
+	}
+	providerCfg.ReplaceAuth(auths)
+
 	// Set provider type metric
 	service.MetricProviderType.WithLabelValues(string(providerCfg.Type())).Set(1)
 
@@ -219,7 +248,6 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 	service.MetricConfiguredKeys.Set(float64(keyCount))
 
 	// Initialize placeholder request metrics only for keys pinned to a specific client CN.
-	auths := providerCfg.Auth()
 	keyMetrics := make([]service.KeyMetricInfo, 0, len(auths))
 	for _, authConfig := range auths {
 		if authConfig.KeyName != "" && authConfig.AllowedClientCN != "" {
@@ -242,8 +270,6 @@ func (s *SignerApp) initRPC(cfg *Config, providerCfg *provider.ProviderConfig) e
 func (s *SignerApp) initAdmin(cfg *Config, providerCfg *provider.ProviderConfig) error {
 	s.adminApp = admin.NewAdminApp(s.log, s.registry)
 	s.adminApp.SetVersion(s.version)
-	s.adminApp.SetMetricsInitFn(service.InitKeyMetrics)
-	s.adminApp.SetMetricsDeleteFn(service.DeleteKeyMetrics)
 
 	if err := s.adminApp.Init(&cfg.AdminConfig, providerCfg); err != nil {
 		return fmt.Errorf("failed to initialize admin app: %w", err)
