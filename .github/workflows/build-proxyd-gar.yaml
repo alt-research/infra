@@ -1,0 +1,117 @@
+name: Build Proxyd image to GAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to build
+        required: true
+        default: alt/proxyd/v4.30.0-dev
+      image_tag:
+        description: Docker image tag (leave empty for <ref>-<short-sha>)
+        required: false
+        default: ""
+
+env:
+  GAR_REGISTRY: us-west1-docker.pkg.dev
+  GAR_IMAGE: shared-resources-alt/altlayer-proxyd/altlayer-proxyd
+  PLATFORM: linux/amd64
+
+concurrency:
+  group: build-proxyd-gar-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and push Proxyd
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Compute image metadata
+        id: meta
+        env:
+          REF_INPUT: ${{ inputs.ref }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git_commit="$(git rev-parse HEAD)"
+          git_date="$(git show -s --format='%ct' HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+
+          if [[ -n "${IMAGE_TAG_INPUT}" ]]; then
+            image_tag="${IMAGE_TAG_INPUT}"
+          else
+            ref_name="${REF_INPUT#refs/heads/}"
+            ref_name="${ref_name#refs/tags/}"
+            safe_ref="$(printf '%s' "${ref_name}" \
+              | tr '/' '-' \
+              | sed -E 's/[^A-Za-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//')"
+            if [[ -z "${safe_ref}" ]]; then
+              safe_ref="manual"
+            fi
+            image_tag="${safe_ref}-${short_sha}"
+          fi
+
+          if [[ ! "${image_tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid Docker image tag: ${image_tag}" >&2
+            exit 1
+          fi
+
+          image="${GAR_REGISTRY}/${GAR_IMAGE}:${image_tag}"
+          {
+            echo "git_commit=${git_commit}"
+            echo "git_date=${git_date}"
+            echo "image_tag=${image_tag}"
+            echo "image=${image}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Building ${git_commit} as ${image}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GAR
+        run: gcloud auth configure-docker "${GAR_REGISTRY}" --quiet
+
+      - name: Build and push Proxyd
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: proxyd/Dockerfile
+          platforms: ${{ env.PLATFORM }}
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          build-args: |
+            GITCOMMIT=${{ steps.meta.outputs.git_commit }}
+            GITDATE=${{ steps.meta.outputs.git_date }}
+            GITVERSION=${{ steps.meta.outputs.image_tag }}
+          cache-from: type=gha,scope=proxyd
+          cache-to: type=gha,scope=proxyd,mode=max
+
+      - name: Verify pushed image
+        run: docker buildx imagetools inspect "${{ steps.meta.outputs.image }}"
+
+      - name: Summarize image
+        run: |
+          echo "## Proxyd image pushed" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo '\`${{ steps.meta.outputs.image }}\`' >> "${GITHUB_STEP_SUMMARY}"
