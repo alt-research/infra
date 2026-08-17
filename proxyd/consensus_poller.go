@@ -766,21 +766,22 @@ func (cp *ConsensusPoller) findConsensusBlock(
 	}
 }
 
-// fetchELState fetches the block numbers and hashes for the latest, safe, and finalized
-// tags from a single EL backend, performing zero-value validation inline.
+// fetchELState fetches the block numbers and hashes for the finalized, safe, and latest
+// tags from a single EL backend, performing zero-value validation inline. Fetching from
+// the most-final to the least-final tag reduces cross-block snapshots on fast chains.
 func (cp *ConsensusPoller) fetchELState(ctx context.Context, be *Backend) (ELBlockState, error) {
 	var s ELBlockState
 	var err error
 
-	s.LatestBlockNumber, s.LatestBlockHash, err = cp.fetchELBlock(ctx, be, "latest")
+	s.FinalizedBlockNumber, _, err = cp.fetchELBlock(ctx, be, "finalized")
 	if err != nil {
-		log.Warn("error updating backend - latest block will not be updated", "name", be.Name, "err", err)
+		log.Warn("error updating backend - finalized block will not be updated", "name", be.Name, "err", err)
 		return ELBlockState{}, err
 	}
-	if s.LatestBlockNumber == 0 {
-		log.Warn("error backend responded a 200 with blockheight 0 for latest block", "name", be.Name)
+	if s.FinalizedBlockNumber == 0 {
+		log.Warn("error backend responded a 200 with blockheight 0 for finalized block", "name", be.Name)
 		be.intermittentErrorsSlidingWindow.Incr()
-		return ELBlockState{}, errZeroLatestBlock
+		return ELBlockState{}, errZeroFinalizedBlock
 	}
 
 	s.SafeBlockNumber, _, err = cp.fetchELBlock(ctx, be, "safe")
@@ -794,15 +795,15 @@ func (cp *ConsensusPoller) fetchELState(ctx context.Context, be *Backend) (ELBlo
 		return ELBlockState{}, errZeroSafeBlock
 	}
 
-	s.FinalizedBlockNumber, _, err = cp.fetchELBlock(ctx, be, "finalized")
+	s.LatestBlockNumber, s.LatestBlockHash, err = cp.fetchELBlock(ctx, be, "latest")
 	if err != nil {
-		log.Warn("error updating backend - finalized block will not be updated", "name", be.Name, "err", err)
+		log.Warn("error updating backend - latest block will not be updated", "name", be.Name, "err", err)
 		return ELBlockState{}, err
 	}
-	if s.FinalizedBlockNumber == 0 {
-		log.Warn("error backend responded a 200 with blockheight 0 for finalized block", "name", be.Name)
+	if s.LatestBlockNumber == 0 {
+		log.Warn("error backend responded a 200 with blockheight 0 for latest block", "name", be.Name)
 		be.intermittentErrorsSlidingWindow.Incr()
-		return ELBlockState{}, errZeroFinalizedBlock
+		return ELBlockState{}, errZeroLatestBlock
 	}
 
 	return s, nil

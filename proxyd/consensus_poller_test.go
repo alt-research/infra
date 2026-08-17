@@ -2,11 +2,81 @@ package proxyd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFetchELStateFastChainTagOrder(t *testing.T) {
+	var calls []string
+	backendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req RPCReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode RPC request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
+		var params []json.RawMessage
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			t.Errorf("decode RPC params: %v", err)
+			http.Error(w, "invalid params", http.StatusBadRequest)
+			return
+		}
+		if len(params) == 0 {
+			t.Error("RPC params are empty")
+			http.Error(w, "empty params", http.StatusBadRequest)
+			return
+		}
+
+		var tag string
+		if err := json.Unmarshal(params[0], &tag); err != nil {
+			t.Errorf("decode block tag: %v", err)
+			http.Error(w, "invalid block tag", http.StatusBadRequest)
+			return
+		}
+		calls = append(calls, tag)
+
+		blockNumber := uint64(100)
+		if len(calls) == 3 {
+			blockNumber++
+		}
+
+		res := rpcResJSON{
+			JSONRPC: JSONRPCVersion,
+			ID:      req.ID,
+			Result: map[string]interface{}{
+				"number": hexutil.EncodeUint64(blockNumber),
+				"hash":   fmt.Sprintf("0x%064x", blockNumber),
+			},
+		}
+		if err := json.NewEncoder(w).Encode(res); err != nil {
+			t.Errorf("encode RPC response: %v", err)
+		}
+	}))
+	defer backendServer.Close()
+
+	backend := NewBackend("fast-chain", backendServer.URL, "", nil)
+	poller := &ConsensusPoller{}
+	state, err := poller.fetchELState(context.Background(), backend)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"finalized", "safe", "latest"}, calls)
+	require.True(t, poller.checkExpectedBlockTags(
+		0,
+		0,
+		state.LatestBlockNumber,
+		0,
+		state.SafeBlockNumber,
+		0,
+		state.FinalizedBlockNumber,
+	))
+}
 
 func TestFindConsensusBlock_exhaustsAtGenesis(t *testing.T) {
 	ctx := context.Background()
