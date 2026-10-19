@@ -360,6 +360,7 @@ func ErrInvalidParams(msg string) *RPCErr {
 type Backend struct {
 	Name                 string
 	rpcURL               string
+	redactRPCErrors      bool
 	receiptsTarget       string
 	wsURL                string
 	authUsername         string
@@ -875,7 +876,7 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 	if err != nil {
 		b.intermittentErrorsSlidingWindow.Incr()
 		RecordBackendNetworkErrorRateSlidingWindow(b, b.ErrorRate())
-		return nil, wrapErr(err, "error creating backend request")
+		return nil, b.rpcRequestError(err, "error creating backend request")
 	}
 
 	if b.authPassword != "" {
@@ -914,7 +915,7 @@ func (b *Backend) doForward(ctx context.Context, rpcReqs []*RPCReq, isBatch bool
 		if errors.Is(err, ErrContextCanceled) {
 			return nil, err
 		}
-		return nil, wrapErr(err, "error in backend request")
+		return nil, b.rpcRequestError(err, "error in backend request")
 	}
 
 	metricLabelMethod := rpcReqs[0].Method

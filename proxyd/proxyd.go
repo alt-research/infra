@@ -240,12 +240,17 @@ func Start(config *Config) (*Server, func(), error) {
 		back := NewBackend(name, rpcURL, wsURL, rpcRequestSemaphore, opts...)
 		backendNames = append(backendNames, name)
 		backendsByName[name] = back
-		log.Info("configured backend",
-			"name", name,
-			"backend_names", backendNames,
-			"rpc_url", rpcURL,
-			"ws_url", wsURL,
-			"probe_url", back.probeURL)
+		back.redactRPCErrors = config.Cache.L1.Enabled
+		if config.Cache.L1.Enabled {
+			log.Info("configured L1 cache backend", "name", name)
+		} else {
+			log.Info("configured backend",
+				"name", name,
+				"backend_names", backendNames,
+				"rpc_url", rpcURL,
+				"ws_url", wsURL,
+				"probe_url", back.probeURL)
+		}
 
 		if back.probeSpec != nil {
 			// capture the slowest probe

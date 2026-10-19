@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // L1CacheConfig opts a dedicated, single-backend HTTP proxy into shared L1 reads.
@@ -429,7 +431,12 @@ func (c *l1RPCCache) putLocked(group string, d l1Read, res *RPCRes, generation u
 				if json.Unmarshal(row, &raw) != nil || !strings.HasPrefix(raw, "0x") || len(raw) < 4 {
 					return
 				}
-				if _, err := hex.DecodeString(raw[2:]); err != nil {
+				encoded, err := hex.DecodeString(raw[2:])
+				if err != nil {
+					return
+				}
+				var decoded types.Receipt
+				if decoded.UnmarshalBinary(encoded) != nil {
 					return
 				}
 			} else {
@@ -445,6 +452,10 @@ func (c *l1RPCCache) putLocked(group string, d l1Read, res *RPCRes, generation u
 				_, txOK := l1Hash(receipt.TransactionHash)
 				idx, indexOK := l1Quantity(receipt.TransactionIndex)
 				if !ok || h != d.selector || !txOK || !indexOK || idx != uint64(i) {
+					return
+				}
+				var decoded types.Receipt
+				if json.Unmarshal(row, &decoded) != nil {
 					return
 				}
 			}
@@ -468,4 +479,25 @@ func (c *l1RPCCache) putLocked(group string, d l1Read, res *RPCRes, generation u
 	c.entries[d.key] = c.order.PushFront(e)
 	c.bytes += cost
 	l1CacheBytes.Set(float64(c.bytes))
+}
+
+// Preserve cancellation/deadline classification without logging token-bearing URLs
+// embedded by net/http in transport errors. Enabled only for the dedicated L1 mode.
+type redactedL1TransportError struct{ cause error }
+
+func (e redactedL1TransportError) Error() string {
+	if errors.Is(e.cause, context.DeadlineExceeded) {
+		return "L1 upstream request timed out"
+	}
+	if errors.Is(e.cause, context.Canceled) {
+		return "L1 upstream request canceled"
+	}
+	return "L1 upstream transport failure"
+}
+func (e redactedL1TransportError) Unwrap() error { return e.cause }
+func (b *Backend) rpcRequestError(err error, operation string) error {
+	if b.redactRPCErrors {
+		return wrapErr(redactedL1TransportError{err}, operation)
+	}
+	return wrapErr(err, operation)
 }

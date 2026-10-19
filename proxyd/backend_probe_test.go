@@ -1,6 +1,8 @@
 package proxyd
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -338,7 +340,7 @@ func TestProbeWorkerDNSFailure(t *testing.T) {
 
 	worker, err := NewProbeWorker(
 		"test-backend",
-		"http://invalid-domain.com/health",
+		"http://probe-test.invalid/health",
 		spec,
 		func(result bool, message string) {
 			resultChan <- result
@@ -348,6 +350,12 @@ func TestProbeWorkerDNSFailure(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("Failed to create probe worker: %v", err)
+	}
+
+	// Exercise DNS error handling without external DNS, proxies, or a domain
+	// whose behavior can change independently of this test.
+	worker.transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: "probe-test.invalid", IsNotFound: true}
 	}
 
 	worker.Start()

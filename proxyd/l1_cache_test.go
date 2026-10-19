@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +62,13 @@ func TestL1CacheConcurrentReadsAndWaiterCancellation(t *testing.T) {
 		firstDone <- err
 	}()
 	<-started
+	joinedCounter := l1CacheEvents.WithLabelValues("eth_getBlockByHash", "coalesced")
+	joinedValue := func() float64 {
+		value := new(dto.Metric)
+		require.NoError(t, joinedCounter.Write(value))
+		return value.GetCounter().GetValue()
+	}
+	joinedBefore := joinedValue()
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for id := 2; id <= 3; id++ {
@@ -70,6 +82,8 @@ func TestL1CacheConcurrentReadsAndWaiterCancellation(t *testing.T) {
 			errs <- err
 		}(id)
 	}
+	require.Eventually(t, func() bool { return joinedValue() >= joinedBefore+2 },
+		time.Second, time.Millisecond, "both followers must join the in-flight read before it completes")
 	cancel()
 	require.ErrorIs(t, <-firstDone, context.Canceled)
 	close(release)
@@ -91,10 +105,15 @@ func TestL1CacheReceiptCoverageAndBadResponses(t *testing.T) {
 			c := testL1Cache(t)
 			var calls atomic.Int32
 			var result any
+			receipt := &types.Receipt{Type: types.LegacyTxType, Status: 1, CumulativeGasUsed: 21000, GasUsed: 21000,
+				BlockHash: common.HexToHash(testL1Hash), TxHash: common.HexToHash(testL1OtherHash), BlockNumber: big.NewInt(1),
+				Logs: []*types.Log{}, TransactionIndex: 0}
 			if method == "debug_getRawReceipts" {
-				result = []string{"0xc0"}
+				raw, err := receipt.MarshalBinary()
+				require.NoError(t, err)
+				result = []string{fmt.Sprintf("0x%x", raw)}
 			} else {
-				result = []any{map[string]any{"blockHash": testL1Hash, "transactionHash": testL1OtherHash, "transactionIndex": "0x0"}}
+				result = []*types.Receipt{receipt}
 			}
 			load := constantL1(&RPCRes{Result: result}, &calls)
 			for i := 0; i < 3; i++ {
@@ -104,7 +123,7 @@ func TestL1CacheReceiptCoverageAndBadResponses(t *testing.T) {
 			require.EqualValues(t, 1, calls.Load())
 		})
 	}
-	bad := []*RPCRes{{Result: nil}, {Result: json.RawMessage("null")}, {Result: []any{}}, {Error: &RPCErr{Code: -32005, Message: "quota"}}, {Result: []string{"not-hex"}}}
+	bad := []*RPCRes{{Result: nil}, {Result: json.RawMessage("null")}, {Result: []any{}}, {Error: &RPCErr{Code: -32005, Message: "quota"}}, {Result: []string{"not-hex"}}, {Result: []string{"0xc0"}}}
 	for _, res := range bad {
 		c := testL1Cache(t)
 		var calls atomic.Int32
@@ -300,4 +319,15 @@ func TestL1CacheFencesNumberReadAcrossFinalityChange(t *testing.T) {
 	_, hit, _, err := c.Forward(ctx, "eth", number, constantL1(l1BlockRes(16, testL1OtherHash), &calls))
 	require.NoError(t, err)
 	require.False(t, hit, "an older in-flight number mapping must not be promoted after the boundary changed")
+}
+
+func TestL1CacheTransportErrorRedaction(t *testing.T) {
+	upstream := &url.Error{Op: "Post", URL: "https://example.invalid/v1/private-token", Err: context.DeadlineExceeded}
+	backend := &Backend{redactRPCErrors: true}
+	err := backend.rpcRequestError(upstream, "request")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotContains(t, err.Error(), "private-token")
+	require.NotContains(t, err.Error(), "example.invalid")
+	backend.redactRPCErrors = false
+	require.Contains(t, backend.rpcRequestError(upstream, "request").Error(), "private-token", "legacy behavior remains unchanged")
 }

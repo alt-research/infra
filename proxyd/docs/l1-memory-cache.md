@@ -102,6 +102,16 @@ normally does not discount provider CU; benchmark latency separately.
 | `eth_chainId`, `net_version` | Immutable TTL only when matching configured chain ID. |
 | Per-transaction receipts, pending, logs, storage/proofs and other permitted reads | Bypass cache; they are not assumed immutable. |
 
+Raw receipts are decoded and standard receipt fields parsed before retention.
+The proxy does not independently reconstruct the receipt trie or check complete
+receipt count against a fetched header. Clients retain those checks; if a
+well-shaped but invalid upstream result is cached, stop rollout and restart the
+proxy to clear it after diagnosing the provider. No chain-data reset is needed.
+
+L1 mode omits endpoint URLs from backend startup logs and redacts transport-error
+URLs while preserving cancellation/deadline classification. Request-body logging
+should stay disabled for this deployment.
+
 Errors, null, empty receipts and mismatched block/receipt metadata are never
 stored. A finalized-height regression or same-height finalized-hash change
 invalidates canonical-number/tag entries. In-flight mutable reads are fenced
