@@ -7,6 +7,15 @@ on:
         description: Branch, tag, or commit SHA to build
         required: true
         default: alt/proxyd/v4.30.0-dev
+      platforms:
+        description: Target image architectures
+        type: choice
+        required: true
+        default: linux/amd64
+        options:
+          - linux/amd64
+          - linux/arm64
+          - linux/amd64,linux/arm64
       image_tag:
         description: Docker image tag (leave empty for <ref>-<short-sha>)
         required: false
@@ -15,7 +24,7 @@ on:
 env:
   GAR_REGISTRY: us-west1-docker.pkg.dev
   GAR_IMAGE: shared-resources-alt/altlayer-proxyd/altlayer-proxyd
-  PLATFORM: linux/amd64
+  PLATFORM: ${{ inputs.platforms }}
 
 concurrency:
   group: build-proxyd-gar-${{ inputs.ref }}
@@ -77,6 +86,10 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
           echo "Building ${git_commit} as ${image}"
+
+      - name: Set up QEMU for ARM builds
+        if: inputs.platforms != 'linux/amd64'
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

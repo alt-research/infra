@@ -85,6 +85,7 @@ type Server struct {
 	rpcServer               *http.Server
 	wsServer                *http.Server
 	cache                   RPCCache
+	l1Cache                 *l1RPCCache
 	srvMu                   sync.Mutex
 	rateLimitHeader         string
 	interopValidatingConfig InteropValidationConfig
@@ -740,7 +741,51 @@ func (s *Server) handleBatchRPC(ctx context.Context, reqs []json.RawMessage, isL
 
 	servedBy := make(map[string]bool, 0)
 	var cached bool
+	// This request-local map also merges identical elements with duplicate IDs,
+	// which have already been split into different upstream batch groups.
+	l1Results := make(map[string]*RPCRes)
 	for group, batch := range batches {
+		if l1 := s.l1Cache; l1 != nil {
+			for _, elem := range batch {
+				desc, cacheable := l1.read(group.backendGroup, elem.Req)
+				if prior := l1Results[desc.key]; cacheable && prior != nil {
+					responses[elem.Index] = cloneL1Response(prior, elem.Req)
+					callBackends[elem.Index] = BackendCache
+					cached = true
+					continue
+				}
+				res, hit, sb, err := l1.Forward(ctx, group.backendGroup, elem.Req,
+					func(workCtx context.Context, req *RPCReq) (*RPCRes, string, error) {
+						results, backend, err := s.BackendGroups[group.backendGroup].Forward(workCtx, []*RPCReq{req}, false)
+						if err != nil {
+							return nil, backend, err
+						}
+						if len(results) != 1 {
+							return nil, backend, errors.New("invalid L1 backend response count")
+						}
+						return results[0], backend, nil
+					})
+				if err != nil {
+					res = NewRPCErrorRes(elem.Req.ID, err)
+				}
+				if res == nil {
+					res = NewRPCErrorRes(elem.Req.ID, ErrInternal)
+				}
+				responses[elem.Index] = res
+				if cacheable {
+					l1Results[desc.key] = res
+				}
+				callBackends[elem.Index] = backendNameFromServedBy(sb)
+				if hit {
+					callBackends[elem.Index] = BackendCache
+					cached = true
+				}
+				if sb != "" {
+					servedBy[sb] = true
+				}
+			}
+			continue
+		}
 		var cacheMisses []batchElem
 
 		for _, req := range batch {

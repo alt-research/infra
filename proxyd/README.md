@@ -88,6 +88,10 @@ The following request methods are rewritten:
 And `eth_blockNumber` response is overridden with current block consensus.
 
 
+## Shared L1 cache (opt-in)
+
+For colocated rollup followers, see [the bounded in-process L1 cache](docs/l1-memory-cache.md). It adds block-hash receipts, short tag caching, observed-finalized number caching and request coalescing without Redis. Existing deployments are unchanged unless explicitly enabled.
+
 ## Cacheable methods
 
 Cache use Redis and can be enabled for the following immutable methods:

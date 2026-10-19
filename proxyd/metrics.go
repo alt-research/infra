@@ -248,6 +248,14 @@ var (
 		"auth",
 	})
 
+	l1CacheEvents = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: MetricsNamespace, Name: "l1_cache_events_total",
+		Help: "Opt-in L1 cache bypasses, coalesced requests, evictions and finality resets.",
+	}, []string{"method", "event"})
+	l1CacheBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: MetricsNamespace, Name: "l1_cache_bytes",
+		Help: "Retained L1 cache JSON/key bytes plus per-entry metadata allowance; excludes in-flight data and process overhead.",
+	})
 	cacheHitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: MetricsNamespace,
 		Name:      "cache_hits_total",

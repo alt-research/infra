@@ -24,6 +24,9 @@ func SetLogLevel(logLevel slog.Leveler) {
 }
 
 func Start(config *Config) (*Server, func(), error) {
+	if err := validateL1CacheConfig(config); err != nil {
+		return nil, nil, err
+	}
 	if len(config.Backends) == 0 {
 		return nil, nil, errors.New("must define at least one backend")
 	}
@@ -434,10 +437,17 @@ func Start(config *Config) (*Server, func(), error) {
 	}
 
 	var (
-		cache    Cache
-		rpcCache RPCCache
+		cache         Cache
+		rpcCache      RPCCache
+		sharedL1Cache *l1RPCCache
 	)
-	if config.Cache.Enabled {
+	if config.Cache.L1.Enabled {
+		var err error
+		sharedL1Cache, err = newL1RPCCache(config.Cache.L1)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if config.Cache.Enabled {
 		if redisClient == nil {
 			log.Warn("redis is not configured, using in-memory cache")
 			cache = newMemoryCache()
@@ -543,6 +553,7 @@ func Start(config *Config) (*Server, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating server: %w", err)
 	}
+	srv.l1Cache = sharedL1Cache
 
 	// Enable to support browser websocket connections.
 	// See https://pkg.go.dev/github.com/gorilla/websocket#hdr-Origin_Considerations
