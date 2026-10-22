@@ -1,6 +1,6 @@
 FROM chainguard/wolfi-base:latest AS builder
 
-RUN apk add --no-cache nodejs-24 yarn
+RUN apk add --no-cache 'nodejs-24>=24.22.1' yarn
 
 WORKDIR /opt/optimism/replica-healthcheck
 COPY ./replica-healthcheck .
@@ -10,7 +10,7 @@ RUN yarn build
 
 FROM chainguard/wolfi-base:latest
 
-RUN apk add --no-cache nodejs-24 npm
+RUN apk add --no-cache 'nodejs-24>=24.22.1' npm
 
 WORKDIR /opt/optimism/replica-healthcheck
 
